@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import resnet152_places365_scratch
 import torch
 import torch.nn as nn
+import torchvision.models as models
 
 def image_Show():
 
@@ -38,6 +39,7 @@ if __name__ == "__main__" :
 
         torch.cuda.set_device(0)
         resnet152_places365_scratch = resnet152_places365_scratch.cuda()
+
 
 
 
