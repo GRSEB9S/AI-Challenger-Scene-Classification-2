@@ -7,6 +7,7 @@ import resnet152_places365_scratch
 import torch
 import torch.nn as nn
 import torchvision.models as models
+import torch.optim as optim
 
 def image_Show():
 
@@ -18,14 +19,14 @@ def image_Show():
         grid = utils.make_grid(imgs_Batch) # make a grid of mini-batch images
         plt.imshow(grid)
 
-if __name__ == "__main__" :
+if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser
-    parser.add_argument("--which",default="train",help="specify which part of dataset")
-    parser.parse_args()
+    parser = argparse.ArgumentParser(description="scene_classification for AI Challenge")
+    parser.add_argument('--which',default="train",type=str,help="specify which part of dataset")
+    args = parser.parse_args()
 
     dataset = scene_Classification(
-        part=parser.which,
+        part=args.which,
         Transform=transforms.Compose([
         ]))
 
@@ -40,6 +41,9 @@ if __name__ == "__main__" :
         torch.cuda.set_device(0)
         resnet152_places365_scratch = resnet152_places365_scratch.cuda()
 
+    criterion = nn.Softmax()
+    optimizer = optim.SGD(resnet152_places365_scratch.parameters(),lr=0.001,momentum=0.9)
 
-
-
+    # for epoch in range(100):
+        # running_loss = 0.0
+    

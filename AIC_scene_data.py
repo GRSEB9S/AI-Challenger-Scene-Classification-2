@@ -13,7 +13,7 @@ class scene_Classification(Dataset):
 
     def __init__(self,part="train",Transform=None):
 
-        with open("{}/{}".format(path,"ai_challenger_scene_train_20170904/scene_train_images_20170904/scene_classes.csv")) as f:
+        with open("{}/{}".format(path,"ai_challenger_scene_train_20170904/scene_classes.csv")) as f:
             f_csv = csv.reader(f,delimiter=',')
             for row in f_csv:
                 id2chi[row[0]] = row[1]
