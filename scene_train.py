@@ -30,7 +30,7 @@ if __name__ == '__main__':
         Transform=transforms.Compose([
             transforms.Scale((224,224)),
             transforms.ToTensor(), # pixel values range from 0.0 to 1.0
-            transforms.Normalize(mean=#TODO,std=#TODO) # calculate mean and std for each image or the whole dataset?
+            # transforms.Normalize(mean=TODO,std=TODO)  calculate mean and std for each image or the whole dataset?
         ]))
 
     loader = DataLoader(dataset,batch_size=4,shuffle=True,num_workers=4,drop_last=True)
@@ -49,4 +49,5 @@ if __name__ == '__main__':
 
     # for epoch in range(100):
         # running_loss = 0.0
+    image_Show()
 
