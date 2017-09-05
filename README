@@ -1,0 +1,17 @@
+代码说明：
+
+	AIC_scene_data.py构建数据集，目前实现了ai_challenger_train数据集，日后应增加Places365_standard数据集，以及LSUN数据集，或者合并成一个数据集，具体做法参加torch.utils.data.dataset.ConcatDataset类。
+
+	1\ densenet_cosine_264_k48.py
+	2\ resnet152_places365_scratch.py
+	3\ resnet50_places365_scratch.py
+	4\ resnext_101_32x4d.py
+	5\ resnext_101_64x4d.py
+	6\ resnext_50_32x4d.py
+	为预训练模型架构定义文件。
+	注意！！
+	2\3模型为Places365_standard预训练模型，没有经过ImageNet预训练。
+	1\4\5\6为imageNet预训练模型。没有经过Places365数据集训练。
+	以上所有模型均来自torch模型，使用torch2pytorch convertor(https://github.com/clcarwin/convert_torch_to_pytorch)转为pytorch模型，1\4\5\6已经原作者证实可以复现ImageNet上的结果。2\3未经证实。
+
+	scene_train.py为训练代码。
