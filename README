@@ -17,7 +17,7 @@
 	scene_train.py为训练代码。
 	
 	代码编写：
-
+		Places数据集和lsun数据集构建
 		图像预处理操作
 		网络训练(first priority)：
 		sing-GPU版/multi-GPU版		
