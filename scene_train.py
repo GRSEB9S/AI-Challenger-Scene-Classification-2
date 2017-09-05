@@ -35,7 +35,9 @@ if __name__ == '__main__':
 
     loader = DataLoader(dataset,batch_size=4,shuffle=True,num_workers=4,drop_last=True)
 
-    # it's the converted pytorch resnet152 trained on Places365_Standard from scratch
+    # different pre-trained model to train.
+    # need to validate accuracy performance for each, plus training complexity and consumed time.
+    # current pre-trained models available are ResNet,ResNext and DenseNet. 
     resnet152_places365_scratch = resnet152_places365_scratch.resnet152_places365
     resnet152_places365_scratch.load_state_dict(torch.load("/data/chaoyang/Places_challenge2017/resnet152_places365.pth"))
 
@@ -47,7 +49,5 @@ if __name__ == '__main__':
     criterion = nn.Softmax()
     optimizer = optim.SGD(resnet152_places365_scratch.parameters(),lr=0.001,momentum=0.9)
 
-    # for epoch in range(100):
-        # running_loss = 0.0
-    image_Show()
+
 

@@ -15,3 +15,9 @@
 	以上所有模型均来自torch模型，使用torch2pytorch convertor(https://github.com/clcarwin/convert_torch_to_pytorch)转为pytorch模型，1\4\5\6已经原作者证实可以复现ImageNet上的结果。2\3未经证实。
 
 	scene_train.py为训练代码。
+	
+	代码编写：
+
+		图像预处理操作
+		网络训练(first priority)：
+		sing-GPU版/multi-GPU版		
