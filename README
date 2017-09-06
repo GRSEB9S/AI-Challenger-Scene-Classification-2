@@ -21,3 +21,6 @@
 		图像预处理操作
 		网络训练(first priority)：
 		sing-GPU版/multi-GPU版		
+
+思考：
+	数据集Balanced or Unbalanced
