@@ -18,16 +18,138 @@ def image_Show():
         grid = utils.make_grid(imgs_Batch) # make a grid of mini-batch images
         plt.imshow(grid)
 
+class Meter():
+    """
+    A little helper class which keeps track of statistics during an epoch.
+    """
+    def __init__(self, name, cum=False):
+        self.cum = cum
+        if type(name) == str:
+            name = (name,)
+        self.name = name
+
+        self._total = torch.zeros(len(self.name))
+        self._last_value = torch.zeros(len(self.name))
+        self._count = 0.0
+
+
+    def update(self, data, n=1):
+        self._count = self._count + n
+        if isinstance(data, torch.autograd.Variable):
+            self._last_value.copy_(data.data)
+        elif isinstance(data, torch.Tensor):
+            self._last_value.copy_(data)
+        else:
+            self._last_value.fill_(data)
+        self._total.add_(self._last_value)
+
+
+    def value(self):
+        if self.cum:
+            return self._total
+        else:
+            return self._total / self._count
+
+
+    def __repr__(self):
+        return '\t'.join(['%s: %.5f (%.3f)' % (n, lv, v)
+            for n, lv, v in zip(self.name, self._last_value, self.value())])
+
+# @Todo 
+def _make_dataloaders(train_set, valid_set, test_set, train_size, valid_size, batch_size):
+    # Split training into train and validation
+    indices = torch.randperm(len(train_set))
+    train_indices = indices[:len(indices)-valid_size][:train_size or None]
+    valid_indices = indices[len(indices)-valid_size:] if valid_size else None
+
+    train_loader = torch.utils.data.DataLoader(train_set, pin_memory=True, batch_size=batch_size,
+                                               sampler=SubsetRandomSampler(train_indices))
+    test_loader = torch.utils.data.DataLoader(test_set, pin_memory=True, batch_size=batch_size)
+    if valid_size:
+        valid_loader = torch.utils.data.DataLoader(valid_set, pin_memory=True, batch_size=batch_size,
+                                                   sampler=SubsetRandomSampler(valid_indices))
+    else:
+        valid_loader = None
+
+    return train_loader, valid_loader, test_loader
+
+# @Todo
+def _set_lr(optimizer, epoch, n_epochs, lr):
+    lr = lr
+    if float(epoch) / n_epochs > 0.75:
+        lr = lr * 0.01
+    elif float(epoch) / n_epochs > 0.5:
+        lr = lr * 0.1
+
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+        print(param_group['lr'])
+
+
+def run_epoch(loader, model, criterion, optimizer, epoch=0, n_epochs=0, train=True):
+    time_meter = Meter(name='Time', cum=True)
+    loss_meter = Meter(name='Loss', cum=False)
+    error_meter = Meter(name='Error', cum=False)
+
+    if train:
+        model.train()
+        print('Training')
+    else:
+        model.eval()
+        print('Evaluating')
+
+    end = time.time()
+    for i, (input, target) in enumerate(loader):
+        if train:
+            model.zero_grad()
+            optimizer.zero_grad()
+
+        # Forward pass
+        input_var = Variable(input, volatile=(not train)).cuda(async=True)
+        target_var = Variable(target, volatile=(not train), requires_grad=False).cuda(async=True)
+        output_var = model(input_var)
+        loss = criterion(output_var, target_var)
+
+        # Backward pass
+        if train:
+            loss.backward()
+            optimizer.step()
+            optimizer.n_iters = optimizer.n_iters + 1 if hasattr(optimizer, 'n_iters') else 1
+
+        # Accounting
+        _, predictions_var = torch.topk(output_var, 1)
+        error = 1 - torch.eq(predictions_var, target_var).float().mean()
+        batch_time = time.time() - end
+        end = time.time()
+
+        # Log errors
+        time_meter.update(batch_time)
+        loss_meter.update(loss)
+        error_meter.update(error)
+        print('  '.join([
+            '%s: (Epoch %d of %d) [%04d/%04d]' % ('Train' if train else 'Eval',
+                epoch, n_epochs, i + 1, len(loader)),
+            str(time_meter),
+            str(loss_meter),
+            str(error_meter),
+        ]))
+
+    return time_meter.value(), loss_meter.value(), error_meter.value()
+
+        
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description="scene_classification for AI Challenge")
     parser.add_argument('--gpus',default=torch.cuda.device_count(),type=int,help="how many Gpus to be used")
     parser.add_argument('--model',default='DenseNet',type=str,help="which model:DenseNet,ResNext,ResNet")
     parser.add_argument('--batchSize',default=16,type=int,help="batch Size")
+    parser.add_argument('--momentum',default=0.9,type=float,help="momentum")
     parser.add_argument('--worldSize',default=2,type=int,help="number of distributed processes")
     parser.add_argument('--pretrained',default=True,type=bool,help="whether to use pretrained models or not")
     parser.add_argument('--workers',default=4,type=int,help="number of data loading workers")
     parser.add_argument('--epochs',default=10,type=int,help="number of training epochs")
+    parser.add_argument('--save',default='checkpoint',type=str,help="path to save the model")
     args = parser.parse_args()
 
     # pretrained models
@@ -47,6 +169,8 @@ if __name__ == '__main__':
                    'ResNet50' : 'resnet50_places365_scratch',
                    'ResNet152' : 'resnet152_places365_scratch'}
     model_path = "/data/chaoyang/Places_challenge2017/"
+
+    torch.manual_seed(0) # for stable result
 
     # ---------------------------------------------------
     # multiple Gpu version loading and distributing model
@@ -83,10 +207,19 @@ if __name__ == '__main__':
                 model.load_state_dict(torch.load("{}{}.pth".format(model_path, models_dict[models[5]])))
         else:
         # @TODO how to train non-pretrained model?
+            print("=====> create model : {}".format(args.model))
+            if args.model == 'DenseNetEfficient':
+                from models import DenseNetEfficient # Single GPU
+                model = DenseNetEfficient(# @Todo)
+            elif args.model == 'DenseNetEfficientMulti':
+                from models import DenseNetEfficientMulti # Multi GPU
+                model = DenseNetEfficientMulti(# @Todo)
+
 
         if args.gpus == 1:
 
             # @TODO  move model to single gpu
+            model.cuda()
 
         else:
 
@@ -94,7 +227,7 @@ if __name__ == '__main__':
                 raise ValueError('specify at least 2 processes for distributed training')
             Distributed.init_process_group(backend='gloo', init_method=, world_size=args.worldSize)
 
-            model.cuda()
+            model.cuda() # ??
             net = DistributedDataParallel(model,device_ids=list(range(args.gpus))) # output stored in gpus[0]
 
     else:
@@ -120,25 +253,36 @@ if __name__ == '__main__':
     # ---------------------------------------------------
 
     # define loss function and optimizer
-    criterion = pass
+    criterion = nn.CrossEntropyLoss()
     loss = pass
-    optimizer = pass
+    optimizer = # @Todo optim.SGD(model.parameters(), lr=lr, momentum=args.momentum, nesterov=True)
 
+    best_error = 1    
     for ith_epoch in range(args.epochs):
 
-        for i, (input,label) in enumerate(train_Loader):
+        _set_lr(optimizer, epoch, n_epochs, lr)
+        train_results = run_epoch(
+            loader=train_loader,
+            model=model_wrapper,
+            criterion=criterion,
+            optimizer=optimizer,
+            epoch=epoch,
+            n_epochs=n_epochs,
+            train=True,
+        )
+        valid_results = run_epoch(
+            loader=valid_loader,
+            model=model_wrapper,
+            criterion=criterion,
+            optimizer=optimizer,
+            epoch=epoch,
+            n_epochs=n_epochs,
+            train=False,
+        )
 
-            # measure data loading time.
-
-            label_var = torch.autograd.Variable(label.cuda(async=True))
-            input_var = torch.autograd.Variable(input)
-
-            # compute output
-            output = model(input_var)
-            loss = criterion()
-
-            # compute gradient and do a SGD step
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
+        # Determine if model is the best
+        _, _, valid_error = valid_results
+        if valid_error[0] < best_error:
+            best_error = valid_error[0]
+            print('New best error: %.4f' % best_error)
+            torch.save(model.state_dict(), os.path.join(save, 'model.t7'))
