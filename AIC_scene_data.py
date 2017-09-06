@@ -35,7 +35,7 @@ class scene_Classification(Dataset):
 
         with open(self.label[self.part]) as f:
             lines = f.readlines()
-            img_name,img_label = lines[item].split(' ')
+            img_name,img_label = lines[item].split(' ') # img_label is an int, not one-hot vector.
             image= io.imread('{}/{}'.format(self.data[self.part],img_name))
         sample = {"image" : image, "label" : img_label}
 
@@ -44,6 +44,39 @@ class scene_Classification(Dataset):
 
         return sample
 
+# @TODO
+class places365_Standard(Dataset):
+
+    # only contain images within the labels of AIC_scene_train dataset.
+
+    path = "/data/chaoyang/scene_Classification"
+    id2eng = dict()
+    with open("{}/{}".format(path, "ai_challenger_scene_train_20170904/scene_classes.csv")) as f:
+        f_csv = csv.reader(f, delimiter=',')
+        for row in f_csv:
+            id2eng[row[0]] = row[2]
+
+    def __init__(self):
+        pass
+
+    def __len__(self):
+        pass
+
+    def __getitem__(self, item):
+        pass
+
+# @TODO
+
+class LSUN(Dataset):
+
+    def __init__(self):
+        pass
+
+    def __len__(self):
+        pass
+
+    def __getitem__(self, item):
+        pass
 
 
 

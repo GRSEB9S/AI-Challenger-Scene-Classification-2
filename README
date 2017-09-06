@@ -22,13 +22,5 @@
 		网络训练(first priority)：
 		sing-GPU版/multi-GPU版		
 
-
-------
-
-#### Suo's Todo:
-* Learning from scratch
-	- [ ] Finish experiment framework  
-    - [ ] Start from DenseNet
-=======
 思考：
 	数据集Balanced or Unbalanced

@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
@@ -26,7 +25,6 @@ class LambdaMap(LambdaBase):
 class LambdaReduce(LambdaBase):
     def forward(self, input):
         return reduce(self.lambda_func,self.forward_prepare(input))
-
 
 densenet_cosine_264_k48 = nn.Sequential( # Sequential,
 	nn.Conv2d(3,96,(7, 7),(2, 2),(3, 3),1,1,bias=False),
@@ -1478,31 +1476,7 @@ densenet_cosine_264_k48 = nn.Sequential( # Sequential,
 	nn.BatchNorm2d(4032),
 	nn.ReLU(),
 	nn.AvgPool2d((7, 7),(7, 7)),
-	#,
-	 ,
-	R,
-	e,
-	s,
-	h,
-	a,
-	p,
-	e,
-	 ,
-	N,
-	o,
-	t,
-	 ,
-	I,
-	m,
-	p,
-	l,
-	e,
-	m,
-	e,
-	n,
-	t,
-	,,
-	
-,
+# reshape not implemented. what does this mean?
+	if
 	nn.Sequential(Lambda(lambda x: x.view(1,-1) if 1==len(x.size()) else x ),nn.Linear(4032,1000)), # Linear,
 )
