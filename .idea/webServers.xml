@@ -2,7 +2,7 @@
 <project version="4">
   <component name="WebServers">
     <option name="servers">
-      <webServer id="34a9bc50-b0bb-4bde-8fd6-733d6e4de06e" name="10.65.1.181" url="http://10.65.1.181">
+      <webServer id="19652b4b-bb1a-4e9f-aeaa-18fbbb237ed0" name="1080Ti" url="http://10.65.1.181">
         <fileTransfer host="10.65.1.181" port="22" accessType="SFTP">
           <advancedOptions>
             <advancedOptions dataProtectionLevel="Private" />

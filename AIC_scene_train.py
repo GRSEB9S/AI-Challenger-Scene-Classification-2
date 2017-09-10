@@ -2,6 +2,8 @@ import argparse
 import shutil
 import matplotlib.pyplot as plt
 import time
+import AIC_scene_data
+import os
 
 import torch.utils.data
 import torch.optim as optim
@@ -12,9 +14,11 @@ import torch.nn as nn
 
 from torch.utils.data import DataLoader
 from torchvision import transforms, utils
-from torch.nn.parallel import DistributedDataParallel
-from AIC_scene_data import scene_Classification
+from torch.nn import DataParallel
+from AIC_scene_data import scene_train
+from AIC_scene_data import scene_val
 from torch.autograd import Variable
+from Meter import Meter
 
 def image_Show():
 
@@ -26,43 +30,22 @@ def image_Show():
         grid = utils.make_grid(imgs_Batch) # make a grid of mini-batch images
         plt.imshow(grid)
 
-class Meter:
-    """Computes and stores the average and total value"""
-
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
 def _make_dataloaders(train_set, val_set):
-
-    if args.gpus > 1:
-        train_Sampler = torch.utils.data.distributed.DistributedSampler(train_set)
-    else:
-        train_Sampler=None
 
     train_Loader = DataLoader(train_set,
                               batch_size=args.batchSize,
-                              shuffle=(train_Sampler is None),
+                              shuffle=True,
                               num_workers=args.workers,
-                              batch_sampler=train_Sampler,
-                              pin_memory=True)
+                              batch_sampler=None,
+                              pin_memory=True,
+                              drop_last=True)
 
     val_Loader = DataLoader(val_set,
-                            batch_size=args.batch_size,
+                            batch_size=args.batchSize,
                             shuffle=False,
                             num_workers=args.workers,
-                            pin_memory=True)
+                            pin_memory=True,
+                            drop_last=True)
 
     return train_Loader,val_Loader
 
@@ -77,8 +60,8 @@ def _set_lr(optimizer, ith_epoch, epochs):
 
 def save_checkpoint(state,model_name,is_best):
 
-    root_path = "{}{}".format(path,"ai_Challenger_scene_train_20170904")
-    checkpoint_path = "{}/{}_{}_{}_{}.pth.tar".format(root_path,model_name,state['epoch'],state['lr'],state['weight_decay'])
+    root_path = "{}/{}".format(path,"ai_challenger_scene_train_20170904")
+    checkpoint_path = "{}/{}_{}.pth.tar".format(root_path,model_name,state['epoch'])
 
     torch.save(state,checkpoint_path)
     if is_best:
@@ -95,23 +78,24 @@ def train(train_Loader, model, criterion, optimizer, ith_epoch,):
     model.train()
 
     end = time.time()
-    for ith_batch, (input, label) in enumerate(train_Loader):
+    for ith_batch, data in enumerate(train_Loader):
 
+        input , label = data['image'], data['label']
+        input, label = input.cuda(), label.cuda()
         data_time.update(time.time()-end)
         end = time.time()
 
         # Forward pass
-        label = label.cuda(async=True)
         input_var = Variable(input)
         label_var = Variable(label)
         output = model(input_var)
         loss = criterion(output, label_var) # average loss within a mini-batch
 
         # measure accuracy and record loss
-        prec1,prec3 = accuracy(output.data,label,topk=(1,3))
+        prec1,prec3 = accuracy(output.data,label,topk=(0,2))
         losses.update(loss.data[0])
-        top1.update(prec1.data[0])
-        top3.update([prec3.data[0]])
+        top1.update(prec1)
+        top3.update(prec3)
 
         # Backward pass
         optimizer.zero_grad()
@@ -122,15 +106,14 @@ def train(train_Loader, model, criterion, optimizer, ith_epoch,):
         batch_time.update(time.time()-end)
         end = time.time()
 
+        bt_avg, dt_avg, loss_avg,top1_avg, top3_avg = batch_time.avg, data_time.avg,losses.avg, top1.avg, top3.avg
         if ith_batch % args.print_freq == 0:
-            print('Train : ith_batch, batches, ith_epoch : {}/{}/{}\t'
-                  'Averaged Batch-computing Time : {batch_time.avg:.5f}\t'
-                  'Averaged Batch-loading Time : {data_time.avg:.5f}\t'
-                  'Averaged Batch-Loss : {losses.avg:.4f}\t'
-                  'Averaged Batch-Prec@1 : {top1.avg:.4f}\t'
-                  'Averaged Batch-Prec@3 : {top3.avg:.4f}'.format(
-                  ith_batch,len(train_Loader),ith_epoch,batch_time,data_time,losses,top1=top1,top3=top3
-            ))
+            print('Train : ith_batch, batches, ith_epoch : %s %s %s\n' %(ith_batch,len(train_Loader),ith_epoch),
+                  'Averaged Batch-computing Time : %s \n' % bt_avg,
+                  'Averaged Batch-loading Time : %s \n' % dt_avg,
+                  'Averaged Batch-Loss : %s \n' % loss_avg,
+                  'Averaged Batch-Prec@1 : %s \n' % top1_avg,
+                  'Averaged Batch-Prec@3 : %s \n' % top3_avg )
 
     return losses.avg
 
@@ -142,53 +125,60 @@ def validate(val_Loader,model,criterion,ith_epoch):
     top1 = Meter()  # record average top1 precision across all mini-batches within an epoch
     top3 = Meter()  # record average top3 precision
 
-    model.val()
+    model.eval()
 
     end = time.time()
-    for ith_batch, (input, label) in enumerate(train_Loader):
+    for ith_batch, data in enumerate(train_Loader):
 
+        input, label = data['image'], data['label']
+        input, label = input.cuda(), label.cuda()
         data_time.update(time.time() - end)
         end = time.time()
 
         # Forward pass
-        label = label.cuda(async=True)
         input_var = Variable(input)
         label_var = Variable(label)
         output = model(input_var)
         loss = criterion(output, label_var)  # average loss within a mini-batch
 
         # measure accuracy and record loss
-        prec1, prec3 = accuracy(output.data, label, topk=(1, 3))
+        prec1, prec3 = accuracy(output.data, label, topk=(0, 2))
         losses.update(loss.data[0])
-        top1.update(prec1.data[0])
-        top3.update([prec3.data[0]])
+        top1.update(prec1)
+        top3.update(prec3)
 
         batch_time.update(time.time() - end)
         end = time.time()
 
+        bt_avg, dt_avg, loss_avg, top1_avg, top3_avg = batch_time.avg, data_time.avg, losses.avg, top1.avg, top3.avg
         if ith_batch % args.print_freq == 0:
-            print('Test : ith_batch, batches, ith_epoch{}/{}/{}\t'
-                  'Averaged Batch-processing Time : {batch_time.avg:.5f}\t'
-                  'Averaged Batch-loading Time : {data_time.avg:.5f}\t'
-                  'Averaged Batch-Loss : {losses.avg:.4f}\t'
-                  'Averaged Batch-Prec@1 : {top1.avg:.4f}\t'
-                  'Averaged Batch-Prec@3 : {top3.avg:.4f}'.format(
-                ith_batch,len(val_Loader),ith_epoch,batch_time,data_time,losses,top1,top3
-            ))
-
+            print('Validate : ith_batch, batches, ith_epoch : %s %s %s\n' % (ith_batch, len(train_Loader), ith_epoch),
+                  'Averaged Batch-computing Time : %s \n' % bt_avg,
+                  'Averaged Batch-loading Time : %s \n' % dt_avg,
+                  'Averaged Batch-Loss : %s \n' % loss_avg,
+                  'Averaged Batch-Prec@1 : %s \n' % top1_avg,
+                  'Averaged Batch-Prec@3 : %s \n' % top3_avg)
     return top1.avg,top3.avg
 
-def accuracy(output,label,topk=(1,)):
+def accuracy(output,label,topk=(0,)):
 
     # compute accuracy for precision@k for the specified k
+    # output : Batch x n_classes
+
+    assert output.shape[0]==args.batchSize
 
     maxk = max(topk)
-    _, pred_index = torch.topk(output,maxk,dim=1,largest=True,sorted=True) # descending order
+    _, pred_index = torch.topk(output,maxk+1,dim=1,largest=True,sorted=True) # descending order
     correct = pred_index.eq(label.view(args.batchSize,-1).expand_as(pred_index))
-
+    for i in range(args.batchSize):
+        for j in range(3):
+            if correct[i,j] == 1 :
+                for k in range(j+1,3):
+                    correct[i,k] = 1
+                break
     res=[]
     for k in topk:
-        correct_k = correct[:,:k].view(-1).float().mean()
+        correct_k = correct[:,k].sum() / args.batchSize
         res.append(correct_k)
 
     return res
@@ -196,23 +186,23 @@ def accuracy(output,label,topk=(1,)):
 if __name__ == '__main__':
 
     global path
-    path = "/data/chaoyang/scene_Classification/"  # path to your saved model,same as datasets dir
+    path = "/data/chaoyang/scene_Classification"  # path to your saved model,same as datasets dir
 
     parser = argparse.ArgumentParser(description="scene_classification for AI Challenge")
     parser.add_argument('--gpus',default=torch.cuda.device_count(),type=int,help="how many Gpus to be used")
     parser.add_argument('--model',default='DenseNet',type=str,help="which model:DenseNet,ResNext,ResNet")
-    parser.add_argument('--batchSize',default=128,type=int,help="batch Size")
+    parser.add_argument('--batchSize',default=64,type=int,help="batch Size")
     parser.add_argument('--momentum',default=0.9,type=float,help="momentum")
-    parser.add_argument('--worldSize',default=4,type=int,help="number of distributed processes")
     parser.add_argument('--pretrained',default=True,type=bool,help="whether to use pretrained models or not")
     parser.add_argument('--workers',default=4,type=int,help="number of data loading workers")
-    parser.add_argument('--epochs',default=60,type=int,help="number of training epochs")
+    parser.add_argument('--epochs',default=200,type=int,help="number of training epochs")
     parser.add_argument('--start-epoch',type=int,default=0,help="start epoch, useful when retraining")
     parser.add_argument('--save',default='checkpoint',type=str,help="path to save the model")
     parser.add_argument('--lr','--learning-rate',type=float,default=0.1,help="learning rate")
     parser.add_argument('--weight-decay',default=1e-4,type=float,help='weight decay')
     parser.add_argument('--print-freq',default=10,type=int,help="print training statics every print_freq batches")
     parser.add_argument('--lr-decay',default=20,type=int,help="learning rate decayed every lr_decay epochs")
+    parser.add_argument('--resume',default=None,type=str,help="model name to be resumed")
     args = parser.parse_args()
 
     # pretrained models
@@ -233,13 +223,39 @@ if __name__ == '__main__':
                    'ResNet152' : 'resnet152_places365_scratch'}
     pre_model_path = "/data/chaoyang/Places_challenge2017/"
 
-    torch.manual_seed(0) # for stable result
+    # ---------------------------------------------------
+    #                                        data loading
+    # ---------------------------------------------------
+
+    train_dataset = scene_train(
+        part='train',
+        Transform=transforms.Compose([
+            AIC_scene_data.RandomSizedCrop(224),
+            AIC_scene_data.RandomHorizontalFlip(),
+            AIC_scene_data.ToTensor(),  # pixel values range from 0.0 to 1.0
+            AIC_scene_data.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225]) # ImageNet
+        ]))
+
+    print(train_dataset.__len__())
+
+    val_dataset = scene_val(
+        part='val',
+        Transform=transforms.Compose([
+            AIC_scene_data.Scale(256),
+            AIC_scene_data.CenterCrop(224),
+            AIC_scene_data.ToTensor(),
+            AIC_scene_data.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225]) # ImageNet
+        ]))
+
+    train_Loader,val_Loader = _make_dataloaders(train_dataset,val_dataset)
 
     # ---------------------------------------------------
     # multiple Gpu version loading and distributing model
     # ---------------------------------------------------
 
-    if torch.cuda.is_available():
+    if args.resume is None:
 
         # load model
         if args.pretrained:
@@ -247,27 +263,28 @@ if __name__ == '__main__':
             if args.model == pre_models[0]:
                 import densenet_cosine_264_k48
                 model = densenet_cosine_264_k48.densenet_cosine_264_k48
-                model.load_state_dict(torch.load("{}{}.pth".format(pre_model_path, models_dict[pre_models[0]])))
             elif args.model == pre_models[1]:
                 import resnext_101_32x4d
                 model = resnext_101_32x4d.resnext_101_32x4d
-                model.load_state_dict(torch.load("{}{}.pth".format(pre_model_path, models_dict[pre_models[1]])))
             elif args.model == pre_models[2]:
                 import resnext_101_64x4d
                 model = resnext_101_64x4d.resnext_101_64x4d
-                model.load_state_dict(torch.load("{}{}.pth", format(pre_model_path, models_dict[pre_models[2]])))
             elif args.model == pre_models[3]:
                 import resnext_50_32x4d
                 model = resnext_50_32x4d.resnext_50_32x4d
-                model.load_state_dict(torch.load("{}{}.pth".format(pre_model_path, models_dict[pre_models[3]])))
             elif args.model == pre_models[4]:
                 import resnet50_places365_scratch
                 model = resnet50_places365_scratch.resnet50_places365
-                model.load_state_dict(torch.load("{}{}.pth".format(pre_model_path, models_dict[pre_models[4]])))
             else:
                 import resnet152_places365_scratch
                 model = resnet152_places365_scratch.resnet152_places365
-                model.load_state_dict(torch.load("{}{}.pth".format(pre_model_path, models_dict[pre_models[5]])))
+
+            pre_state_dict = torch.load("{}{}.pth".format(pre_model_path, models_dict[pre_models[0]]))
+            layers = list(pre_state_dict.keys())
+            pre_state_dict.pop[-1]
+            pre_state_dict.pop[-2]
+            model.load_state_dict(pre_state_dict)
+
         else:
 
             print("=====> create model : {}".format(args.model))
@@ -285,52 +302,33 @@ if __name__ == '__main__':
 
         else:
 
-            if args.worldSize == 1:
-                raise ValueError('specify at least 2 processes for distributed training')
-            Distributed.init_process_group(backend='gloo', init_method="tcp://10.65.1.181:22",
-                                           world_size=args.worldSize,rank=0)
+            model = DataParallel(model, device_ids=list(range(args.gpus)))  # output stored in gpus[0]
+            model = model.cuda()
 
-            net = DistributedDataParallel(model.cuda(),device_ids=list(range(args.gpus))) # output stored in gpus[0]
+        global optimizer
+        optimizer = optim.SGD(model.parameters(),
+                              lr=args.lr,
+                              momentum=args.momentum,
+                              weight_decay=args.weight_decay,
+                              nesterov=True)
 
-    else:
-        raise ValueError('Gpus not available yet!')
+    # optionally resume from a checkpoint
+    if args.resume is not None:
+        print("=====> loading checkpoint '{}'".format(args.resume))
+        checkpoint = torch.load(args.resume)
+        args.start_epoch = checkpoint['epoch']
+        best_prec3 = checkpoint['best_prec3']
+        model.load_state_dict(checkpoint['state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        print("=====> loaded checkpoint '{}' (epoch {})"
+              .format(args.resume, checkpoint['epoch']))
 
-    # ---------------------------------------------------
-    #                                        data loading
-    # ---------------------------------------------------
-
-    train_dataset = scene_Classification(
-        part='train',
-        Transform=transforms.Compose([
-            transforms.RandomSizedCrop(224),
-            transforms.RandomHorizontalFlip,
-            transforms.ToTensor(),  # pixel values range from 0.0 to 1.0
-            # transforms.Normalize(mean=TODO,std=TODO)  calculate mean and std for each image or the whole dataset?
-        ]))
-
-    val_dataset = scene_Classification(
-        part='val',
-        Transform=transforms.Compose([
-            transforms.Scale(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize()
-        ]))
-
-    train_Loader,val_Loader = _make_dataloaders(train_dataset,val_dataset)
-
+    # define loss function and optimizer
+    criterion = nn.CrossEntropyLoss().cuda()
 
     # ---------------------------------------------------
     #                                               train
     # ---------------------------------------------------
-
-    # define loss function and optimizer
-    criterion = nn.CrossEntropyLoss().cuda()
-    optimizer = optim.SGD(model.parameters(),
-                          lr=args.lr,
-                          momentum=args.momentum,
-                          weight_decay=args.weight_decay,
-                          nesterov=True)
 
     best_prec3 = 0
     losses = Meter() # record loss of training epochs
@@ -344,6 +342,7 @@ if __name__ == '__main__':
 
         # evaluate on validation set
         prec1,prec3 = validate(val_Loader,model,criterion,ith_epoch)
+        print("=====> Validation set : prec@1 : %s \t prec@3 : %s" % (prec1,prec3))
 
         # determine if model is the best
         is_best = prec3 > best_prec3
@@ -356,5 +355,5 @@ if __name__ == '__main__':
             'model_name': args.model,
             'state_dict': model.state_dict(),
             'best_prec3' : best_prec3,
-            'optimizer': optimizer.state_dict()
-        }, is_best)
+            'optimizer_state_dict': optimizer.state_dict()
+        }, args.model, is_best)

@@ -1,3 +1,3 @@
-from torchvision import datasets
-from torch.utils.data.dataset import C
-datasets.ImageFolder()
+from AIC_scene_data import places365std_AIC
+
+places365std_AIC = places365std_AIC()

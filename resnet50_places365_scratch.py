@@ -324,5 +324,5 @@ resnet50_places365 = nn.Sequential( # Sequential,
 	nn.ReLU(),
 	nn.AvgPool2d((7, 7),(1, 1)),
 	Lambda(lambda x: x.view(x.size(0),-1)), # View,
-	nn.Sequential(Lambda(lambda x: x.view(1,-1) if 1==len(x.size()) else x ),nn.Linear(2048,365)), # Linear,
+	nn.Sequential(Lambda(lambda x: x.view(1,-1) if 1==len(x.size()) else x ),nn.Linear(2048,80)), # Linear,
 )
