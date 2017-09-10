@@ -1,7 +1,6 @@
 # specify the "path" variable pointing to your overall dir of dataset
 
 from torch.utils.data import Dataset
-from skimage import io
 import csv
 import random
 from PIL import Image
@@ -293,9 +292,9 @@ class scene_val(Dataset):
 
     global path
     path = "/data/chaoyang/scene_Classification"
-    def __init__(self, part="train",loader=pil_loader, Transform=None):
+    def __init__(self, part="val",loader=pil_loader, Transform=None):
 
-        self.label = "{}/{}/val_label.txt".format(path, "ai_challenger_scene_val_20170904")
+        self.label = "{}/{}/val_label.txt".format(path, "ai_challenger_scene_train_20170904")
         self.part, self.Transform, self.loader= part, Transform, loader
 
     def __len__(self):
@@ -319,6 +318,38 @@ class scene_val(Dataset):
             return trsf_sample
 
         return sample
+
+class scene_testA(Dataset):
+
+    global path
+    path = "/data/chaoyang/scene_Classification"
+    def __init__(self, part="testA",loader=pil_loader, Transform=None):
+
+        self.label = "{}/{}/testA_label.txt".format(path, "ai_challenger_scene_train_20170904")
+        self.part, self.Transform, self.loader= part, Transform, loader
+
+    def __len__(self):
+
+        f = open(self.label, 'r')
+        lenth = len(f.readlines())
+        f.close()
+        return lenth
+
+    def __getitem__(self, item):
+
+        with open(self.label) as f:
+            lines = f.readlines()
+            img_name, label_index = lines[item].split(' ')  # img_label is an int, not one-hot vector.
+            image = self.loader('{}/{}'.format(path, img_name))
+
+        sample = {"image" : image,"label" : int(label_index)}
+
+        if self.Transform:
+            trsf_sample = self.Transform(sample)
+            return trsf_sample
+
+        return sample
+
 
 class places365std_AIC(Dataset):
 

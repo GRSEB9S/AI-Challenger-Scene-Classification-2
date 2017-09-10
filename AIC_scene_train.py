@@ -3,11 +3,9 @@ import shutil
 import matplotlib.pyplot as plt
 import time
 import AIC_scene_data
-import os
 
 import torch.utils.data
 import torch.optim as optim
-import torch.distributed as Distributed
 import torch
 import self_models
 import torch.nn as nn
@@ -37,14 +35,12 @@ def _make_dataloaders(train_set, val_set):
                               shuffle=True,
                               num_workers=args.workers,
                               batch_sampler=None,
-                              pin_memory=True,
                               drop_last=True)
 
     val_Loader = DataLoader(val_set,
                             batch_size=args.batchSize,
                             shuffle=False,
                             num_workers=args.workers,
-                            pin_memory=True,
                             drop_last=True)
 
     return train_Loader,val_Loader
@@ -128,7 +124,7 @@ def validate(val_Loader,model,criterion,ith_epoch):
     model.eval()
 
     end = time.time()
-    for ith_batch, data in enumerate(train_Loader):
+    for ith_batch, data in enumerate(val_Loader):
 
         input, label = data['image'], data['label']
         input, label = input.cuda(), label.cuda()
@@ -152,7 +148,7 @@ def validate(val_Loader,model,criterion,ith_epoch):
 
         bt_avg, dt_avg, loss_avg, top1_avg, top3_avg = batch_time.avg, data_time.avg, losses.avg, top1.avg, top3.avg
         if ith_batch % args.print_freq == 0:
-            print('Validate : ith_batch, batches, ith_epoch : %s %s %s\n' % (ith_batch, len(train_Loader), ith_epoch),
+            print('Validate : ith_batch, batches, ith_epoch : %s %s %s\n' % (ith_batch, len(val_Loader), ith_epoch),
                   'Averaged Batch-computing Time : %s \n' % bt_avg,
                   'Averaged Batch-loading Time : %s \n' % dt_avg,
                   'Averaged Batch-Loss : %s \n' % loss_avg,
@@ -190,7 +186,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description="scene_classification for AI Challenge")
     parser.add_argument('--gpus',default=torch.cuda.device_count(),type=int,help="how many Gpus to be used")
-    parser.add_argument('--model',default='DenseNet',type=str,help="which model:DenseNet,ResNext,ResNet")
+    parser.add_argument('--model',default='ResNet152',type=str,help="which model:DenseNet,ResNext,ResNet")
     parser.add_argument('--batchSize',default=64,type=int,help="batch Size")
     parser.add_argument('--momentum',default=0.9,type=float,help="momentum")
     parser.add_argument('--pretrained',default=True,type=bool,help="whether to use pretrained models or not")
@@ -200,7 +196,7 @@ if __name__ == '__main__':
     parser.add_argument('--save',default='checkpoint',type=str,help="path to save the model")
     parser.add_argument('--lr','--learning-rate',type=float,default=0.1,help="learning rate")
     parser.add_argument('--weight-decay',default=1e-4,type=float,help='weight decay')
-    parser.add_argument('--print-freq',default=10,type=int,help="print training statics every print_freq batches")
+    parser.add_argument('--print-freq',default=50,type=int,help="print training statics every print_freq batches")
     parser.add_argument('--lr-decay',default=20,type=int,help="learning rate decayed every lr_decay epochs")
     parser.add_argument('--resume',default=None,type=str,help="model name to be resumed")
     args = parser.parse_args()
@@ -228,7 +224,6 @@ if __name__ == '__main__':
     # ---------------------------------------------------
 
     train_dataset = scene_train(
-        part='train',
         Transform=transforms.Compose([
             AIC_scene_data.RandomSizedCrop(224),
             AIC_scene_data.RandomHorizontalFlip(),
@@ -240,7 +235,6 @@ if __name__ == '__main__':
     print(train_dataset.__len__())
 
     val_dataset = scene_val(
-        part='val',
         Transform=transforms.Compose([
             AIC_scene_data.Scale(256),
             AIC_scene_data.CenterCrop(224),
@@ -248,6 +242,7 @@ if __name__ == '__main__':
             AIC_scene_data.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225]) # ImageNet
         ]))
+    print(val_dataset.__len__())
 
     train_Loader,val_Loader = _make_dataloaders(train_dataset,val_dataset)
 
@@ -279,10 +274,10 @@ if __name__ == '__main__':
                 import resnet152_places365_scratch
                 model = resnet152_places365_scratch.resnet152_places365
 
-            pre_state_dict = torch.load("{}{}.pth".format(pre_model_path, models_dict[pre_models[0]]))
+            pre_state_dict = torch.load("{}{}.pth".format(pre_model_path, models_dict[args.model]))
             layers = list(pre_state_dict.keys())
-            pre_state_dict.pop[-1]
-            pre_state_dict.pop[-2]
+            pre_state_dict.pop(layers[-1])
+            pre_state_dict.pop(layers[-2])
             model.load_state_dict(pre_state_dict)
 
         else:
@@ -318,8 +313,8 @@ if __name__ == '__main__':
         checkpoint = torch.load(args.resume)
         args.start_epoch = checkpoint['epoch']
         best_prec3 = checkpoint['best_prec3']
-        model.load_state_dict(checkpoint['state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        model = checkpoint['model']
+        optimizer = checkpoint['optimizer']
         print("=====> loaded checkpoint '{}' (epoch {})"
               .format(args.resume, checkpoint['epoch']))
 
@@ -353,7 +348,7 @@ if __name__ == '__main__':
         save_checkpoint({
             'epoch': ith_epoch + 1,
             'model_name': args.model,
-            'state_dict': model.state_dict(),
+            'model': model,
             'best_prec3' : best_prec3,
-            'optimizer_state_dict': optimizer.state_dict()
+            'optimizer': optimizer
         }, args.model, is_best)
