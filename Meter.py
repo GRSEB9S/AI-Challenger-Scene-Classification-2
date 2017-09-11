@@ -16,3 +16,6 @@ class Meter:
 
     def avg(self):
         return self.sum / self.count
+
+    def val(self):
+        return self.val

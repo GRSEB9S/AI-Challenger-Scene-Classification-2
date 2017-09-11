@@ -16,6 +16,7 @@ from torch.nn import DataParallel
 from AIC_scene_data import AIC_scene
 from torch.autograd import Variable
 from Meter import Meter
+import matplotlib.pyplot as plt
 
 def _make_dataloaders(train_set, val_set):
 
@@ -320,6 +321,9 @@ if __name__ == '__main__':
     prec1 = Meter() # record precision@1 of validation set
     prec3 = Meter() # record precision@3 of validation set
 
+    fig, host = plt.subplots()
+    par1 = host.twinx()
+
     for ith_epoch in range(args.start_epoch,args.epochs):
 
         _set_lr(optimizer, ith_epoch, args.epochs)
@@ -356,4 +360,13 @@ if __name__ == '__main__':
                 'optimizer': optimizer
             }, args.path , args.model, is_best)
 
-
+        p1, = host.plot(range(args.start_epoch,ith_epoch), train_losses.val(), "b-", label="Train_loss")
+        p2, = host.plot(range(args.start_epoch,ith_epoch), val_losses.val(), "b--", label="Val_loss")
+        p3, = par1.plot(range(args.start_epoch,ith_epoch), prec1.val(), "r--", label="Top-1")
+        p4, = par1.plot(range(args.start_epoch,ith_epoch), prec3.val(), "r-", label="Top-3")        
+        host.set_xlim(args.start_epoch, args.epochs)
+        host.set_ylim(0, 5)
+        par1.set_ylim(0, 100)
+        lines = [p1, p2, p3]
+        host.legend(lines, [l.get_label() for l in lines])
+        plt.show()
