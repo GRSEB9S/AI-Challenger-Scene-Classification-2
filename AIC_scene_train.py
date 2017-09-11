@@ -159,7 +159,7 @@ def accuracy(output,label,topk=(0,)):
                 break
     res=[]
     for k in topk:
-        correct_k = correct[:,k].sum() / args.batchSize
+        correct_k = float(correct[:,k].sum()) / float(args.batchSize)
         res.append(correct_k)
 
     return res
@@ -360,13 +360,13 @@ if __name__ == '__main__':
                 'optimizer': optimizer
             }, args.path , args.model, is_best)
 
-        p1, = host.plot(range(args.start_epoch,ith_epoch), train_losses.val(), "b-", label="Train_loss")
-        p2, = host.plot(range(args.start_epoch,ith_epoch), val_losses.val(), "b--", label="Val_loss")
-        p3, = par1.plot(range(args.start_epoch,ith_epoch), prec1.val(), "r--", label="Top-1")
-        p4, = par1.plot(range(args.start_epoch,ith_epoch), prec3.val(), "r-", label="Top-3")        
-        host.set_xlim(args.start_epoch, args.epochs)
-        host.set_ylim(0, 5)
-        par1.set_ylim(0, 100)
-        lines = [p1, p2, p3]
-        host.legend(lines, [l.get_label() for l in lines])
-        plt.show()
+        #p1, = host.plot(range(args.start_epoch,ith_epoch), train_losses.val(), "b-", label="Train_loss")
+        #p2, = host.plot(range(args.start_epoch,ith_epoch), val_losses.val(), "b--", label="Val_loss")
+        #p3, = par1.plot(range(args.start_epoch,ith_epoch), prec1.val(), "r--", label="Top-1")
+        #p4, = par1.plot(range(args.start_epoch,ith_epoch), prec3.val(), "r-", label="Top-3")        
+        #host.set_xlim(args.start_epoch, args.epochs)
+        #host.set_ylim(0, 5)
+        #par1.set_ylim(0, 100)
+        #lines = [p1, p2, p3]
+        #host.legend(lines, [l.get_label() for l in lines])
+        #plt.show()
