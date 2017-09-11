@@ -1,3 +1,9 @@
-from AIC_scene_data import places365std_AIC
+import json
 
-places365std_AIC = places365std_AIC()
+file = json.load(open("scene_validation_annotations_20170908.json"))
+
+var_label = open("val_label.txt","w")
+for i in range(len(file)):
+    dict = file[i]
+    var_label.write("{} {}\n".format(dict['image_id'],dict['label_id']))
+var_label.close()

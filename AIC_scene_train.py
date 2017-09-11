@@ -1,6 +1,5 @@
 import argparse
 import shutil
-import matplotlib.pyplot as plt
 import time
 import AIC_scene_data
 
@@ -9,24 +8,14 @@ import torch.optim as optim
 import torch
 import self_models
 import torch.nn as nn
+import torch.cuda
 
 from torch.utils.data import DataLoader
-from torchvision import transforms, utils
+from torchvision import transforms
 from torch.nn import DataParallel
-from AIC_scene_data import scene_train
-from AIC_scene_data import scene_val
+from AIC_scene_data import AIC_scene
 from torch.autograd import Variable
 from Meter import Meter
-
-def image_Show():
-
-    plt.clf()
-    figure = plt.figure()
-
-    for ith_Batch, sample_Batched in enumerate(train_Loader):
-        imgs_Batch , label_Batch = sample_Batched['image'], sample_Batched['label']
-        grid = utils.make_grid(imgs_Batch) # make a grid of mini-batch images
-        plt.imshow(grid)
 
 def _make_dataloaders(train_set, val_set):
 
@@ -35,12 +24,14 @@ def _make_dataloaders(train_set, val_set):
                               shuffle=True,
                               num_workers=args.workers,
                               batch_sampler=None,
+                              pin_memory=True,
                               drop_last=True)
 
     val_Loader = DataLoader(val_set,
                             batch_size=args.batchSize,
                             shuffle=False,
                             num_workers=args.workers,
+                            pin_memory=True,
                             drop_last=True)
 
     return train_Loader,val_Loader
@@ -54,22 +45,19 @@ def _set_lr(optimizer, ith_epoch, epochs):
         param_group['lr'] = learning_rate
         print('=====> setting learning_rate to : {},{}/{}'.format(learning_rate, ith_epoch, epochs))
 
-def save_checkpoint(state,model_name,is_best):
+def save_checkpoint(state,path,model_name,is_best):
 
-    root_path = "{}/{}".format(path,"ai_challenger_scene_train_20170904")
-    checkpoint_path = "{}/{}_{}.pth.tar".format(root_path,model_name,state['epoch'])
+    checkpoint_path = "{}/{}_{}.pth.tar".format(path,model_name,state['epoch']-1)
 
     torch.save(state,checkpoint_path)
     if is_best:
-        shutil.copyfile(checkpoint_path,"{}/{}_best.pth.tar".format(root_path,model_name))
+        shutil.copyfile(checkpoint_path,"{}/{}_best.pth.tar".format(path,model_name))
 
 def train(train_Loader, model, criterion, optimizer, ith_epoch,):
 
     data_time = Meter() # measure average batch data loading time
     batch_time = Meter() # measure average batch computing time, including forward and backward
     losses = Meter() # record average losses across all mini-batches within an epoch
-    top1 = Meter() # record average top1 precision across all mini-batches within an epoch
-    top3 = Meter() # record average top3 precision
 
     model.train()
 
@@ -90,8 +78,6 @@ def train(train_Loader, model, criterion, optimizer, ith_epoch,):
         # measure accuracy and record loss
         prec1,prec3 = accuracy(output.data,label,topk=(0,2))
         losses.update(loss.data[0])
-        top1.update(prec1)
-        top3.update(prec3)
 
         # Backward pass
         optimizer.zero_grad()
@@ -102,16 +88,14 @@ def train(train_Loader, model, criterion, optimizer, ith_epoch,):
         batch_time.update(time.time()-end)
         end = time.time()
 
-        bt_avg, dt_avg, loss_avg,top1_avg, top3_avg = batch_time.avg, data_time.avg,losses.avg, top1.avg, top3.avg
+        bt_avg,dt_avg,loss_avg, = batch_time.avg(),data_time.avg(),losses.avg()
         if ith_batch % args.print_freq == 0:
             print('Train : ith_batch, batches, ith_epoch : %s %s %s\n' %(ith_batch,len(train_Loader),ith_epoch),
                   'Averaged Batch-computing Time : %s \n' % bt_avg,
                   'Averaged Batch-loading Time : %s \n' % dt_avg,
-                  'Averaged Batch-Loss : %s \n' % loss_avg,
-                  'Averaged Batch-Prec@1 : %s \n' % top1_avg,
-                  'Averaged Batch-Prec@3 : %s \n' % top3_avg )
+                  'Averaged Batch-Loss : %s \n' % loss_avg)
 
-    return losses.avg
+    return losses.avg()
 
 def validate(val_Loader,model,criterion,ith_epoch):
 
@@ -146,7 +130,7 @@ def validate(val_Loader,model,criterion,ith_epoch):
         batch_time.update(time.time() - end)
         end = time.time()
 
-        bt_avg, dt_avg, loss_avg, top1_avg, top3_avg = batch_time.avg, data_time.avg, losses.avg, top1.avg, top3.avg
+        bt_avg,dt_avg,loss_avg,top1_avg,top3_avg = batch_time.avg(),data_time.avg(),losses.avg(),top1.avg(),top3.avg()
         if ith_batch % args.print_freq == 0:
             print('Validate : ith_batch, batches, ith_epoch : %s %s %s\n' % (ith_batch, len(val_Loader), ith_epoch),
                   'Averaged Batch-computing Time : %s \n' % bt_avg,
@@ -154,7 +138,7 @@ def validate(val_Loader,model,criterion,ith_epoch):
                   'Averaged Batch-Loss : %s \n' % loss_avg,
                   'Averaged Batch-Prec@1 : %s \n' % top1_avg,
                   'Averaged Batch-Prec@3 : %s \n' % top3_avg)
-    return top1.avg,top3.avg
+    return losses.avg(),top1.avg(),top3.avg()
 
 def accuracy(output,label,topk=(0,)):
 
@@ -181,24 +165,22 @@ def accuracy(output,label,topk=(0,)):
 
 if __name__ == '__main__':
 
-    global path
-    path = "/data/chaoyang/scene_Classification"  # path to your saved model,same as datasets dir
-
     parser = argparse.ArgumentParser(description="scene_classification for AI Challenge")
     parser.add_argument('--gpus',default=torch.cuda.device_count(),type=int,help="how many Gpus to be used")
     parser.add_argument('--model',default='ResNet152',type=str,help="which model:DenseNet,ResNext,ResNet")
     parser.add_argument('--batchSize',default=64,type=int,help="batch Size")
     parser.add_argument('--momentum',default=0.9,type=float,help="momentum")
     parser.add_argument('--pretrained',default=True,type=bool,help="whether to use pretrained models or not")
-    parser.add_argument('--workers',default=4,type=int,help="number of data loading workers")
-    parser.add_argument('--epochs',default=200,type=int,help="number of training epochs")
+    parser.add_argument('--workers',default=8,type=int,help="number of data loading workers")
+    parser.add_argument('--epochs',default=150,type=int,help="number of training epochs")
     parser.add_argument('--start-epoch',type=int,default=0,help="start epoch, useful when retraining")
-    parser.add_argument('--save',default='checkpoint',type=str,help="path to save the model")
     parser.add_argument('--lr','--learning-rate',type=float,default=0.1,help="learning rate")
     parser.add_argument('--weight-decay',default=1e-4,type=float,help='weight decay')
     parser.add_argument('--print-freq',default=50,type=int,help="print training statics every print_freq batches")
-    parser.add_argument('--lr-decay',default=20,type=int,help="learning rate decayed every lr_decay epochs")
-    parser.add_argument('--resume',default=None,type=str,help="model name to be resumed")
+    parser.add_argument('--save-freq',default=10,type=int,help="save checkpoint every save_freq epochs")
+    parser.add_argument('--lr-decay',default=30,type=int,help="learning rate decayed every lr_decay epochs")
+    parser.add_argument('--resume',default=None,type=str,help="path to model to be resumed")
+    parser.add_argument('--path',default="/data/chaoyang/scene_Classification",type=str,help="root path")
     args = parser.parse_args()
 
     # pretrained models
@@ -223,7 +205,9 @@ if __name__ == '__main__':
     #                                        data loading
     # ---------------------------------------------------
 
-    train_dataset = scene_train(
+    train_dataset = AIC_scene(
+        part="train",
+        path = args.path,
         Transform=transforms.Compose([
             AIC_scene_data.RandomSizedCrop(224),
             AIC_scene_data.RandomHorizontalFlip(),
@@ -231,10 +215,10 @@ if __name__ == '__main__':
             AIC_scene_data.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225]) # ImageNet
         ]))
-
     print(train_dataset.__len__())
-
-    val_dataset = scene_val(
+    val_dataset = AIC_scene(
+        part="val",
+        path = args.path,
         Transform=transforms.Compose([
             AIC_scene_data.Scale(256),
             AIC_scene_data.CenterCrop(224),
@@ -243,7 +227,6 @@ if __name__ == '__main__':
                                  std=[0.229, 0.224, 0.225]) # ImageNet
         ]))
     print(val_dataset.__len__())
-
     train_Loader,val_Loader = _make_dataloaders(train_dataset,val_dataset)
 
     # ---------------------------------------------------
@@ -305,10 +288,10 @@ if __name__ == '__main__':
                               lr=args.lr,
                               momentum=args.momentum,
                               weight_decay=args.weight_decay,
-                              nesterov=True)
 
-    # optionally resume from a checkpoint
-    if args.resume is not None:
+                              nesterov=True)
+    else:
+
         print("=====> loading checkpoint '{}'".format(args.resume))
         checkpoint = torch.load(args.resume)
         args.start_epoch = checkpoint['epoch']
@@ -326,29 +309,45 @@ if __name__ == '__main__':
     # ---------------------------------------------------
 
     best_prec3 = 0
-    losses = Meter() # record loss of training epochs
+    train_losses = Meter() # record loss of training epochs
+    val_losses = Meter() # record loss of validating epochs
+    prec1 = Meter() # record precision@1 of validation set
+    prec3 = Meter() # record precision@3 of validation set
 
     for ith_epoch in range(args.start_epoch,args.epochs):
 
         _set_lr(optimizer, ith_epoch, args.epochs)
 
-        loss_avg = train(train_Loader,model,criterion,optimizer,ith_epoch)
-        losses.update(loss_avg,len(train_Loader))
+        train_loss = train(train_Loader,model,criterion,optimizer,ith_epoch)
+        train_losses.update(train_loss)
 
         # evaluate on validation set
-        prec1,prec3 = validate(val_Loader,model,criterion,ith_epoch)
-        print("=====> Validation set : prec@1 : %s \t prec@3 : %s" % (prec1,prec3))
+        val_loss,_prec1,_prec3 = validate(val_Loader,model,criterion,ith_epoch)
+        print("=====> Validation set : prec@1 : %s \t prec@3 : %s" % (_prec1,_prec3))
+        val_losses.update(val_loss)
+        prec1.update(_prec1)
+        prec3.update(_prec3)
 
         # determine if model is the best
-        is_best = prec3 > best_prec3
-        best_prec3 = max(prec3,best_prec3)
-        if is_best:
-            print('=====> setting new best precision@3 : {}'.format(best_prec3))
+        is_best = _prec3 > best_prec3
+        best_prec3 = max(_prec3,best_prec3)
 
-        save_checkpoint({
-            'epoch': ith_epoch + 1,
-            'model_name': args.model,
-            'model': model,
-            'best_prec3' : best_prec3,
-            'optimizer': optimizer
-        }, args.model, is_best)
+        if ith_epoch % args.save_freq == 0 :
+            save_checkpoint({
+                'epoch': ith_epoch + 1,
+                'model_name': args.model,
+                'model': model,
+                'best_prec3': best_prec3,
+                'optimizer': optimizer
+            }, args.path , args.model, is_best)
+        elif is_best:
+            print('=====> setting new best precision@3 : {}'.format(best_prec3))
+            save_checkpoint({
+                'epoch': ith_epoch + 1,
+                'model_name': args.model,
+                'model': model,
+                'best_prec3' : best_prec3,
+                'optimizer': optimizer
+            }, args.path , args.model, is_best)
+
+

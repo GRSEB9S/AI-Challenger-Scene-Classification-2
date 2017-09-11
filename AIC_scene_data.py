@@ -1,13 +1,13 @@
-# specify the "path" variable pointing to your overall dir of dataset
-
 from torch.utils.data import Dataset
 import csv
 import random
 from PIL import Image
+import os
 import math
 import collections
 import numpy as np
 import torch
+import json
 try:
     import accimage
 except ImportError:
@@ -19,22 +19,6 @@ def pil_loader(path):
     with open(path, 'rb') as f:
         with Image.open(f) as img:
             return img.convert('RGB')
-
-"""def accimage_loader(path):
-    try:
-        return accimage.Image(path)
-    except IOError:
-        # Potentially a decoding problem, fall back to PIL.Image
-        return pil_loader(path)
-
-
-def default_loader(path):
-    from torchvision import get_image_backend
-    if get_image_backend() == 'accimage':
-        return accimage_loader(path)
-    else:
-        return pil_loader(path)
-"""
 
 class RandomHorizontalFlip(object):
     """Horizontally flip the given PIL.Image randomly with a probability of 0.5."""
@@ -246,41 +230,59 @@ class Normalize(object):
         return {'image':sample['image'],'label':sample['label']}
 
 
-class scene_train(Dataset):
+class AIC_scene(Dataset):
 
-    global path
-    path = "/data/chaoyang/scene_Classification"
-    def __init__(self,part="train",loader=pil_loader,Transform=None):
+    global id2chi, id2eng
+    id2chi, id2eng = dict(), dict()
 
-        id2chi, id2eng = dict(), dict()
+    def __init__(self,part="train",path=None,Transform=None):
 
-        f = open("{}/{}".format(path, "ai_challenger_scene_train_20170904/scene_classes.csv"), 'r')
-        f_csv = csv.reader(f, delimiter=',')
-        for row in f_csv:
-            id2chi[row[0]] = row[1]
-            id2eng[row[0]] = row[2]
-        f.close()
+        sub_path = {"train": "ai_challenger_scene_train_20170904",
+                    "val": "ai_challenger_scene_validation_20170908"}
+        img_path = {"train" : "scene_train_images_20170904",
+                    "val" : "scene_validation_images_20170908"}
+        json_name = {"train":"scene_train_annotations_20170904.json",
+                     "val":"scene_validation_annotations_20170908.json"}
 
-        self.label = "{}/{}/selected_train_label.txt".format(path,"ai_challenger_scene_train_20170904")
-        self.part, self.Transform, self.loader, self.id2chi, self.id2eng = part, Transform, loader, id2chi, id2eng
+        # convert json file to txt file
+        if path is not None:
+            with open(os.path.join(path,sub_path[part],"scene_classes.csv"), 'r') as f:
+                f_csv = csv.reader(f, delimiter=',')
+                for row in f_csv:
+                    id2chi[row[0]] = row[1]
+                    id2eng[row[0]] = row[2]
+
+            f = json.load(open(os.path.join(path,sub_path[part],json_name[part])))
+            with open(os.path.join(path,sub_path[part],"%s_label.txt" % part),"w") as f_label:
+                for i in range(len(f)):
+                    dict = f[i]
+                    f_label.write("{} {}\n".format(dict['image_id'],dict['label_id']))
+        else:
+            raise ValueError('specify the root path!')
+
+        self.read = os.path.join(path, sub_path[part], "%s_label.txt" % part)
+        self.image, self.label = list(), list()
+
+        # read txt file, store full image/label path in self instance
+        with open(self.read) as f:
+            lines = f.readlines()
+            for i in range(len(lines)):
+                img_name,label_index = lines[i].split(' ')
+                self.image.append(os.path.join(path,sub_path[part],img_path[part],img_name))
+                self.label.append(int(label_index))
+
+        self.part, self.path, self.Transform, self.id2chi, self.id2eng = part, path, Transform, id2chi, id2eng
 
     def __len__(self):
 
-        f = open(self.label,'r')
-        lenth = len(f.readlines())
-        f.close()
+        with open(self.read, 'r') as f:
+            lenth = len(f.readlines())
         return lenth
 
     def __getitem__(self, item):
 
-        with open(self.label) as f:
-            lines = f.readlines()
-            img_name,label_index = lines[item].split(' ') # img_label is an int, not one-hot vector.
-            image = self.loader('{}/{}'.format(path,img_name))
-
-        # img_label = torch.LongTensor(80).zero_()
-        # img_label[int(label_index)] = int(1)
-        sample = {"image": image, "label": int(label_index)}
+        image = pil_loader(self.image[item])
+        sample = {"image": image, "label": self.label[item]}
 
         if self.Transform:
             tsfm_sample = self.Transform(sample)
@@ -288,86 +290,9 @@ class scene_train(Dataset):
 
         return sample
 
-class scene_val(Dataset):
-
-    global path
-    path = "/data/chaoyang/scene_Classification"
-    def __init__(self, part="val",loader=pil_loader, Transform=None):
-
-        self.label = "{}/{}/val_label.txt".format(path, "ai_challenger_scene_train_20170904")
-        self.part, self.Transform, self.loader= part, Transform, loader
-
-    def __len__(self):
-
-        f = open(self.label, 'r')
-        lenth = len(f.readlines())
-        f.close()
-        return lenth
-
-    def __getitem__(self, item):
-
-        with open(self.label) as f:
-            lines = f.readlines()
-            img_name, label_index = lines[item].split(' ')  # img_label is an int, not one-hot vector.
-            image = self.loader('{}/{}'.format(path, img_name))
-
-        sample = {"image" : image,"label" : int(label_index)}
-
-        if self.Transform:
-            trsf_sample = self.Transform(sample)
-            return trsf_sample
-
-        return sample
-
-class scene_testA(Dataset):
-
-    global path
-    path = "/data/chaoyang/scene_Classification"
-    def __init__(self, part="testA",loader=pil_loader, Transform=None):
-
-        self.label = "{}/{}/testA_label.txt".format(path, "ai_challenger_scene_train_20170904")
-        self.part, self.Transform, self.loader= part, Transform, loader
-
-    def __len__(self):
-
-        f = open(self.label, 'r')
-        lenth = len(f.readlines())
-        f.close()
-        return lenth
-
-    def __getitem__(self, item):
-
-        with open(self.label) as f:
-            lines = f.readlines()
-            img_name, label_index = lines[item].split(' ')  # img_label is an int, not one-hot vector.
-            image = self.loader('{}/{}'.format(path, img_name))
-
-        sample = {"image" : image,"label" : int(label_index)}
-
-        if self.Transform:
-            trsf_sample = self.Transform(sample)
-            return trsf_sample
-
-        return sample
-
-
 class places365std_AIC(Dataset):
 
-    # only contain training images within the labels of scene_train dataset.
-    def __init__(self):
-
-        AIC_scene_train = scene_train()
-        print(AIC_scene_train.id2eng.values())
-
-    def __len__(self):
-        pass
-
-    def __getitem__(self, item):
-        pass
-
-# @TODO
-class places365std_train(Dataset):
-
+    # add images with common classes to AIC_scene_train dataset
     def __init__(self):
         pass
 
@@ -376,30 +301,6 @@ class places365std_train(Dataset):
 
     def __getitem__(self, item):
         pass
-
-class places365std_val(Dataset):
-
-    def __init__(self):
-        pass
-
-    def __len__(self):
-        pass
-
-    def __getitem__(self, item):
-        pass
-
-class places365std_test(Dataset):
-
-    def __init__(self):
-        pass
-
-    def __len__(self):
-        pass
-
-    def __getitem__(self, item):
-        pass
-
-# @TODO
 
 class LSUN(Dataset):
 
@@ -412,27 +313,5 @@ class LSUN(Dataset):
     def __getitem__(self, item):
         pass
 
-if __name__ == "__main__" :
-
-    path = "/data/chaoyang/scene_Classification"
-
-    f = open("{}/{}".format(path,"ai_challenger_scene_train_20170904/train_label.txt"),'r')
-    lines = f.readlines()
-    f.close()
-    train_number = 43879
-    val_number = 10000
-    assert train_number + val_number == len(lines)
-    val_list = random.sample(range(len(lines)),val_number)
-    train_list = list(set(list(range(len(lines)))) - set(val_list))
-
-    val_file = open("{}/{}".format(path,"ai_challenger_scene_train_20170904/val_label.txt"),'w')
-    for i in val_list:
-        val_file.write(lines[i])
-    val_file.close()
-
-    train_file = open("{}/{}".format(path,"ai_challenger_scene_train_20170904/selected_train_label.txt"),'w')
-    for i in train_list:
-        train_file.write(lines[i])
-    train_file.close()
 
 

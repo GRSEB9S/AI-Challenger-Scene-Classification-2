@@ -5,13 +5,14 @@ class Meter:
         self.reset()
 
     def reset(self):
-        self.val = 0
-        self.avg = 0
+        self.val = list()
         self.sum = 0
         self.count = 0
 
     def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
+        self.val.append(val)
+        self.sum += val
         self.count += n
-        self.avg = self.sum / self.count
+
+    def avg(self):
+        return self.sum / self.count
