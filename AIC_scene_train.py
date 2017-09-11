@@ -181,6 +181,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr-decay',default=30,type=int,help="learning rate decayed every lr_decay epochs")
     parser.add_argument('--resume',default=None,type=str,help="path to model to be resumed")
     parser.add_argument('--path',default="/data/chaoyang/scene_Classification",type=str,help="root path")
+    parser.add_argument('--pre_model_path',default="/data/chaoyang/Places_challenge2017/",type=str,help="path to pre-trained models")
     args = parser.parse_args()
 
     # pretrained models
@@ -191,15 +192,16 @@ if __name__ == '__main__':
     # ResNet50:resnet50_places365_scratch.py, trained on Places365_standard, unvalidated
     # ResNet152:resnet152_places365_scratch.py, trained on Places365_standard, unvalidated
 
-    pre_models = ['DenseNet', 'ResNext1101', 'ResNext2101', 'ResNext50', 'ResNet50', 'ResNet152']
+    pre_models = ['DenseNet', 'ResNext1101', 'ResNext2101', 'ResNext50', 'ResNet50', 'ResNet152', 'DenseNet161']
     if args.model not in pre_models and args.pretrained == True: raise ValueError('please specify the right pre_trained model name!')
     models_dict = {'DenseNet' : 'densenet_cosine_264_k48',
                    'ResNext1101' : 'resnext_101_32_4d',
                    'ResNext2101' : 'resnext_101_64x4d',
                    'ResNext50' : 'resnext_50_32x4d',
                    'ResNet50' : 'resnet50_places365_scratch',
-                   'ResNet152' : 'resnet152_places365_scratch'}
-    pre_model_path = "/data/chaoyang/Places_challenge2017/"
+                   'ResNet152' : 'resnet152_places365_scratch',
+                   'DenseNet161' : 'whole_densenet161_places365.pth.tar'}
+    pre_model_path = args.pre_model_path
 
     # ---------------------------------------------------
     #                                        data loading
@@ -257,11 +259,15 @@ if __name__ == '__main__':
                 import resnet152_places365_scratch
                 model = resnet152_places365_scratch.resnet152_places365
 
-            pre_state_dict = torch.load("{}{}.pth".format(pre_model_path, models_dict[args.model]))
-            layers = list(pre_state_dict.keys())
-            pre_state_dict.pop(layers[-1])
-            pre_state_dict.pop(layers[-2])
-            model.load_state_dict(pre_state_dict)
+            if args.model == pre_models[6]:
+                model = torch.load("{}{}".format(pre_model_path, models_dict[args.model]))
+                model.classifier = nn.Linear(2208,80)
+            else:
+            	pre_state_dict = torch.load("{}{}.pth".format(pre_model_path, models_dict[args.model]))
+            	layers = list(pre_state_dict.keys())
+            	pre_state_dict.pop(layers[-1])
+            	pre_state_dict.pop(layers[-2])
+            	model.load_state_dict(pre_state_dict)
 
         else:
 
