@@ -9,12 +9,14 @@ import torch
 import self_models
 import torch.nn as nn
 import torch.cuda
+import logging
 
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torch.nn import DataParallel
 from AIC_scene_data import AIC_scene
 from torch.autograd import Variable
+from Plot import Plot
 from Meter import Meter
 
 def _make_dataloaders(train_set, val_set):
@@ -23,12 +25,11 @@ def _make_dataloaders(train_set, val_set):
                               batch_size=args.batchSize,
                               shuffle=True,
                               num_workers=args.workers,
-                              batch_sampler=None,
                               pin_memory=True,
                               drop_last=True)
 
     val_Loader = DataLoader(val_set,
-                            batch_size=args.batchSize,
+                            batch_size=int(args.batchSize/16),
                             shuffle=False,
                             num_workers=args.workers,
                             pin_memory=True,
@@ -58,6 +59,8 @@ def train(train_Loader, model, criterion, optimizer, ith_epoch,):
     data_time = Meter() # measure average batch data loading time
     batch_time = Meter() # measure average batch computing time, including forward and backward
     losses = Meter() # record average losses across all mini-batches within an epoch
+    prec1 = Meter()
+    prec3 = Meter()
 
     model.train()
 
@@ -76,8 +79,10 @@ def train(train_Loader, model, criterion, optimizer, ith_epoch,):
         loss = criterion(output, label_var) # average loss within a mini-batch
 
         # measure accuracy and record loss
-        prec1,prec3 = accuracy(output.data,label,topk=(0,2))
+        _prec1,_prec3 = accuracy(output.data,label,topk=(0,2))
         losses.update(loss.data[0])
+        prec1.update(_prec1)
+        prec3.update(_prec3)
 
         # Backward pass
         optimizer.zero_grad()
@@ -88,12 +93,14 @@ def train(train_Loader, model, criterion, optimizer, ith_epoch,):
         batch_time.update(time.time()-end)
         end = time.time()
 
-        bt_avg,dt_avg,loss_avg, = batch_time.avg(),data_time.avg(),losses.avg()
+        bt_avg,dt_avg,loss_avg,prec1_avg,prec3_avg = batch_time.avg(),data_time.avg(),losses.avg(),prec1.avg(),prec3.avg()
         if ith_batch % args.print_freq == 0:
             print('Train : ith_batch, batches, ith_epoch : %s %s %s\n' %(ith_batch,len(train_Loader),ith_epoch),
                   'Averaged Batch-computing Time : %s \n' % bt_avg,
                   'Averaged Batch-loading Time : %s \n' % dt_avg,
-                  'Averaged Batch-Loss : %s \n' % loss_avg)
+                  'Averaged Batch-Loss : %s \n' % loss_avg,
+                  'Averaged Batch-prec1 : %s \n' % prec1_avg,
+                  'Averaged Batch-prec3 : %s \n' % prec3_avg)
 
     return losses.avg()
 
@@ -132,7 +139,7 @@ def validate(val_Loader,model,criterion,ith_epoch):
 
         bt_avg,dt_avg,loss_avg,top1_avg,top3_avg = batch_time.avg(),data_time.avg(),losses.avg(),top1.avg(),top3.avg()
         if ith_batch % args.print_freq == 0:
-            print('Validate : ith_batch, batches, ith_epoch : %s %s %s\n' % (ith_batch, len(val_Loader), ith_epoch),
+            print('Validate : ith_batch, batches, ith_epoch : %s %s %s \n' % (ith_batch, len(val_Loader), ith_epoch),
                   'Averaged Batch-computing Time : %s \n' % bt_avg,
                   'Averaged Batch-loading Time : %s \n' % dt_avg,
                   'Averaged Batch-Loss : %s \n' % loss_avg,
@@ -145,12 +152,10 @@ def accuracy(output,label,topk=(0,)):
     # compute accuracy for precision@k for the specified k
     # output : Batch x n_classes
 
-    assert output.shape[0]==args.batchSize
-
     maxk = max(topk)
     _, pred_index = torch.topk(output,maxk+1,dim=1,largest=True,sorted=True) # descending order
-    correct = pred_index.eq(label.view(args.batchSize,-1).expand_as(pred_index))
-    for i in range(args.batchSize):
+    correct = pred_index.eq(label.view(len(label),-1).expand_as(pred_index))
+    for i in range(len(label)):
         for j in range(3):
             if correct[i,j] == 1 :
                 for k in range(j+1,3):
@@ -158,7 +163,7 @@ def accuracy(output,label,topk=(0,)):
                 break
     res=[]
     for k in topk:
-        correct_k = correct[:,k].sum() / args.batchSize
+        correct_k = float(correct[:,k].sum()) / float(len(label))
         res.append(correct_k)
 
     return res
@@ -168,20 +173,35 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="scene_classification for AI Challenge")
     parser.add_argument('--gpus',default=torch.cuda.device_count(),type=int,help="how many Gpus to be used")
     parser.add_argument('--model',default='ResNet152',type=str,help="which model:DenseNet,ResNext,ResNet")
-    parser.add_argument('--batchSize',default=64,type=int,help="batch Size")
+    parser.add_argument('--batchSize',default=128,type=int,help="batch Size")
     parser.add_argument('--momentum',default=0.9,type=float,help="momentum")
     parser.add_argument('--pretrained',default=True,type=bool,help="whether to use pretrained models or not")
     parser.add_argument('--workers',default=8,type=int,help="number of data loading workers")
-    parser.add_argument('--epochs',default=150,type=int,help="number of training epochs")
+    parser.add_argument('--epochs',default=80,type=int,help="number of training epochs")
     parser.add_argument('--start-epoch',type=int,default=0,help="start epoch, useful when retraining")
     parser.add_argument('--lr','--learning-rate',type=float,default=0.1,help="learning rate")
     parser.add_argument('--weight-decay',default=1e-4,type=float,help='weight decay')
     parser.add_argument('--print-freq',default=50,type=int,help="print training statics every print_freq batches")
     parser.add_argument('--save-freq',default=10,type=int,help="save checkpoint every save_freq epochs")
-    parser.add_argument('--lr-decay',default=30,type=int,help="learning rate decayed every lr_decay epochs")
+    parser.add_argument('--lr-decay',default=15,type=int,help="learning rate decayed every lr_decay epochs")
     parser.add_argument('--resume',default=None,type=str,help="path to model to be resumed")
     parser.add_argument('--path',default="/data/chaoyang/scene_Classification",type=str,help="root path")
+    parser.add_argument('--pre_model_path', default="/data/chaoyang/Places_challenge2017/", type=str,
+                        help="path to pre-trained models")
     args = parser.parse_args()
+
+    logger = logging.getLogger(args.model)
+    logger.setLevel(logging.DEBUG)
+    fh = logging.FileHandler("{}.log".format(args.model))
+    fh.setLevel(logging.DEBUG)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(time)s - %(name)s - %(levelname)s - %(message)s')
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+
 
     # pretrained models
     # DenseNet:densenet_consine_264_k48.py; trained on ImageNet, validated
@@ -191,7 +211,7 @@ if __name__ == '__main__':
     # ResNet50:resnet50_places365_scratch.py, trained on Places365_standard, unvalidated
     # ResNet152:resnet152_places365_scratch.py, trained on Places365_standard, unvalidated
 
-    pre_models = ['DenseNet', 'ResNext1101', 'ResNext2101', 'ResNext50', 'ResNet50', 'ResNet152']
+    pre_models = ['DenseNet', 'ResNext1101', 'ResNext2101', 'ResNext50', 'ResNet50', 'ResNet152','DenseNet161']
     if args.model not in pre_models and args.pretrained == True: raise ValueError('please specify the right pre_trained model name!')
     models_dict = {'DenseNet' : 'densenet_cosine_264_k48',
                    'ResNext1101' : 'resnext_101_32_4d',
@@ -199,7 +219,7 @@ if __name__ == '__main__':
                    'ResNext50' : 'resnext_50_32x4d',
                    'ResNet50' : 'resnet50_places365_scratch',
                    'ResNet152' : 'resnet152_places365_scratch'}
-    pre_model_path = "/data/chaoyang/Places_challenge2017/"
+    pre_model_path = args.pre_model_path
 
     # ---------------------------------------------------
     #                                        data loading
@@ -257,11 +277,15 @@ if __name__ == '__main__':
                 import resnet152_places365_scratch
                 model = resnet152_places365_scratch.resnet152_places365
 
-            pre_state_dict = torch.load("{}{}.pth".format(pre_model_path, models_dict[args.model]))
-            layers = list(pre_state_dict.keys())
-            pre_state_dict.pop(layers[-1])
-            pre_state_dict.pop(layers[-2])
-            model.load_state_dict(pre_state_dict)
+            if args.model == pre_models[6]:
+                model = torch.load("{}{}.pth".format(pre_model_path,models_dict[args.model]))
+                model.classifier = nn.Linear(2208,80)
+            else:
+                pre_state_dict = torch.load("{}{}.pth".format(pre_model_path, models_dict[args.model]))
+                layers = list(pre_state_dict.keys())
+                pre_state_dict.pop(layers[-1])
+                pre_state_dict.pop(layers[-2])
+                model.load_state_dict(pre_state_dict)
 
         else:
 
@@ -298,6 +322,9 @@ if __name__ == '__main__':
         best_prec3 = checkpoint['best_prec3']
         model = checkpoint['model']
         optimizer = checkpoint['optimizer']
+        train_losses,val_losses = checkpoint['train_losses'],checkpoint['val_losses']
+        prec1,prec3 = checkpoint['prec1'],checkpoint['prec3']
+        best_prec3 = checkpoint['best_prec3']
         print("=====> loaded checkpoint '{}' (epoch {})"
               .format(args.resume, checkpoint['epoch']))
 
@@ -308,12 +335,11 @@ if __name__ == '__main__':
     #                                               train
     # ---------------------------------------------------
 
-    best_prec3 = 0
-    train_losses = Meter() # record loss of training epochs
-    val_losses = Meter() # record loss of validating epochs
-    prec1 = Meter() # record precision@1 of validation set
-    prec3 = Meter() # record precision@3 of validation set
+    if args.resume is None:
+        best_prec3 = 0
+        train_losses,val_losses,prec1,prec3 = Meter(),Meter(),Meter(),Meter()
 
+    stats = Plot(args.model)
     for ith_epoch in range(args.start_epoch,args.epochs):
 
         _set_lr(optimizer, ith_epoch, args.epochs)
@@ -328,6 +354,8 @@ if __name__ == '__main__':
         prec1.update(_prec1)
         prec3.update(_prec3)
 
+        stats.update_statistics(ith_epoch,train_loss,val_loss,_prec1,_prec3)
+
         # determine if model is the best
         is_best = _prec3 > best_prec3
         best_prec3 = max(_prec3,best_prec3)
@@ -338,7 +366,11 @@ if __name__ == '__main__':
                 'model_name': args.model,
                 'model': model,
                 'best_prec3': best_prec3,
-                'optimizer': optimizer
+                'optimizer': optimizer,
+                'train_losses': train_losses.val, # list
+                'val_losses' : val_losses.val,
+                'prec1' : prec1.val,
+                'prec3' : prec3.val
             }, args.path , args.model, is_best)
         elif is_best:
             print('=====> setting new best precision@3 : {}'.format(best_prec3))
@@ -347,7 +379,11 @@ if __name__ == '__main__':
                 'model_name': args.model,
                 'model': model,
                 'best_prec3' : best_prec3,
-                'optimizer': optimizer
+                'optimizer': optimizer,
+                'train_losses': train_losses.val,  # list
+                'val_losses': val_losses.val,
+                'prec1': prec1.val,
+                'prec3': prec3.val
             }, args.path , args.model, is_best)
 
 
