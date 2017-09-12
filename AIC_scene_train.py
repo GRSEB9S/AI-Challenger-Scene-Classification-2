@@ -102,7 +102,7 @@ def train(train_Loader, model, criterion, optimizer, ith_epoch,):
                   'Averaged Batch-prec1 : %s \n' % prec1_avg,
                   'Averaged Batch-prec3 : %s \n' % prec3_avg)
 
-    return losses.avg()
+    return losses.avg(),prec1.avg(),prec3.avg()
 
 def validate(val_Loader,model,criterion,ith_epoch):
 
@@ -201,7 +201,6 @@ if __name__ == '__main__':
     ch.setFormatter(formatter)
     logger.addHandler(fh)
     logger.addHandler(ch)
-
 
     # pretrained models
     # DenseNet:densenet_consine_264_k48.py; trained on ImageNet, validated
@@ -323,7 +322,7 @@ if __name__ == '__main__':
         model = checkpoint['model']
         optimizer = checkpoint['optimizer']
         train_losses,val_losses = checkpoint['train_losses'],checkpoint['val_losses']
-        prec1,prec3 = checkpoint['prec1'],checkpoint['prec3']
+        val_prec1, val_prec3 = checkpoint['prec1'], checkpoint['prec3']
         best_prec3 = checkpoint['best_prec3']
         print("=====> loaded checkpoint '{}' (epoch {})"
               .format(args.resume, checkpoint['epoch']))
@@ -337,28 +336,28 @@ if __name__ == '__main__':
 
     if args.resume is None:
         best_prec3 = 0
-        train_losses,val_losses,prec1,prec3 = Meter(),Meter(),Meter(),Meter()
+        train_losses,val_losses,train_prec1,train_prec3,val_prec1,val_prec3 = Meter(),Meter(),Meter(),Meter(),Meter(),Meter()
 
     stats = Plot(args.model)
     for ith_epoch in range(args.start_epoch,args.epochs):
 
         _set_lr(optimizer, ith_epoch, args.epochs)
 
-        train_loss = train(train_Loader,model,criterion,optimizer,ith_epoch)
+        train_loss, _train_prec1, _train_prec3 = train(train_Loader,model,criterion,optimizer,ith_epoch)
         train_losses.update(train_loss)
+        train_prec1.update(_train_prec1)
+        train_prec3.update(_train_prec3)
 
         # evaluate on validation set
-        val_loss,_prec1,_prec3 = validate(val_Loader,model,criterion,ith_epoch)
-        print("=====> Validation set : prec@1 : %s \t prec@3 : %s" % (_prec1,_prec3))
+        val_loss, _val_prec1, _val_prec3 = validate(val_Loader, model, criterion, ith_epoch)
+        print("=====> Validation set : prec@1 : %s \t prec@3 : %s" % (_val_prec1, _val_prec3))
         val_losses.update(val_loss)
-        prec1.update(_prec1)
-        prec3.update(_prec3)
-
-        stats.update_statistics(ith_epoch,train_loss,val_loss,_prec1,_prec3)
+        val_prec1.update(_val_prec1)
+        val_prec3.update(_val_prec3)
 
         # determine if model is the best
-        is_best = _prec3 > best_prec3
-        best_prec3 = max(_prec3,best_prec3)
+        is_best = _val_prec3 > best_prec3
+        best_prec3 = max(_val_prec3, best_prec3)
 
         if ith_epoch % args.save_freq == 0 :
             save_checkpoint({
@@ -369,8 +368,8 @@ if __name__ == '__main__':
                 'optimizer': optimizer,
                 'train_losses': train_losses.val, # list
                 'val_losses' : val_losses.val,
-                'prec1' : prec1.val,
-                'prec3' : prec3.val
+                'prec1' : val_prec1.val,
+                'prec3' : val_prec3.val
             }, args.path , args.model, is_best)
         elif is_best:
             print('=====> setting new best precision@3 : {}'.format(best_prec3))
@@ -382,8 +381,9 @@ if __name__ == '__main__':
                 'optimizer': optimizer,
                 'train_losses': train_losses.val,  # list
                 'val_losses': val_losses.val,
-                'prec1': prec1.val,
-                'prec3': prec3.val
+                'prec1': val_prec1.val,
+                'prec3': val_prec3.val
             }, args.path , args.model, is_best)
 
+    stats.save_stats(args.epochs,train_losses,val_losses,train_prec1,train_prec3,val_prec1, val_prec3)
 
