@@ -173,17 +173,17 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="scene_classification for AI Challenge")
     parser.add_argument('--gpus',default=torch.cuda.device_count(),type=int,help="how many Gpus to be used")
     parser.add_argument('--model',default='ResNet152',type=str,help="which model:DenseNet,ResNext,ResNet")
-    parser.add_argument('--batchSize',default=128,type=int,help="batch Size")
+    parser.add_argument('--batchSize',default=256,type=int,help="batch Size")
     parser.add_argument('--momentum',default=0.9,type=float,help="momentum")
     parser.add_argument('--pretrained',default=True,type=bool,help="whether to use pretrained models or not")
     parser.add_argument('--workers',default=8,type=int,help="number of data loading workers")
-    parser.add_argument('--epochs',default=80,type=int,help="number of training epochs")
+    parser.add_argument('--epochs',default=150,type=int,help="number of training epochs")
     parser.add_argument('--start-epoch',type=int,default=0,help="start epoch, useful when retraining")
     parser.add_argument('--lr','--learning-rate',type=float,default=0.1,help="learning rate")
     parser.add_argument('--weight-decay',default=1e-4,type=float,help='weight decay')
     parser.add_argument('--print-freq',default=50,type=int,help="print training statics every print_freq batches")
     parser.add_argument('--save-freq',default=10,type=int,help="save checkpoint every save_freq epochs")
-    parser.add_argument('--lr-decay',default=15,type=int,help="learning rate decayed every lr_decay epochs")
+    parser.add_argument('--lr-decay',default=30,type=int,help="learning rate decayed every lr_decay epochs")
     parser.add_argument('--resume',default=None,type=str,help="path to model to be resumed")
     parser.add_argument('--path',default="/data/chaoyang/scene_Classification",type=str,help="root path")
     parser.add_argument('--pre_model_path', default="/data/chaoyang/Places_challenge2017/", type=str,
@@ -317,12 +317,13 @@ if __name__ == '__main__':
 
         print("=====> loading checkpoint '{}'".format(args.resume))
         checkpoint = torch.load(args.resume)
-        args.start_epoch = checkpoint['epoch']
+        args.start_epoch = checkpoint['epoch'] + 1
         best_prec3 = checkpoint['best_prec3']
         model = checkpoint['model']
         optimizer = checkpoint['optimizer']
         train_losses,val_losses = checkpoint['train_losses'],checkpoint['val_losses']
-        val_prec1, val_prec3 = checkpoint['prec1'], checkpoint['prec3']
+        val_prec1, val_prec3 = checkpoint['val_prec1'], checkpoint['val_prec3']
+        train_prec1, train_prec3 = checkpoint['train_prec1'], checkpoint['train_prec3']
         best_prec3 = checkpoint['best_prec3']
         print("=====> loaded checkpoint '{}' (epoch {})"
               .format(args.resume, checkpoint['epoch']))
@@ -368,8 +369,10 @@ if __name__ == '__main__':
                 'optimizer': optimizer,
                 'train_losses': train_losses.val, # list
                 'val_losses' : val_losses.val,
-                'prec1' : val_prec1.val,
-                'prec3' : val_prec3.val
+                'val_prec1' : val_prec1.val,
+                'val_prec3' : val_prec3.val,
+                'train_prec1' : train_prec1.val,
+                'train_prec3' : train_prec3.val
             }, args.path , args.model, is_best)
         elif is_best:
             print('=====> setting new best precision@3 : {}'.format(best_prec3))
@@ -381,8 +384,10 @@ if __name__ == '__main__':
                 'optimizer': optimizer,
                 'train_losses': train_losses.val,  # list
                 'val_losses': val_losses.val,
-                'prec1': val_prec1.val,
-                'prec3': val_prec3.val
+                'val_prec1': val_prec1.val,
+                'val_prec3': val_prec3.val,
+                'train_prec1' : train_prec1.val,
+                'train_prec3' : train_prec3.val
             }, args.path , args.model, is_best)
 
     stats.save_stats(args.epochs,train_losses,val_losses,train_prec1,train_prec3,val_prec1, val_prec3)

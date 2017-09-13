@@ -19,8 +19,8 @@ class Plot(object):
         self.val_loss = val_loss.val
         self.val_prec1 = val_prec1.val
         self.val_prec3 = val_prec3.val
-        self.train_prec1 = train_prec1
-        self.train_prec3 = train_prec3
+        self.train_prec1 = train_prec1.val
+        self.train_prec3 = train_prec3.val
         np.savez("{}.npz".format(self.model),
                  epochs=self.epochs,
                  train_loss=self.train_loss,
@@ -34,28 +34,33 @@ class Plot(object):
 
         if os.path.exists("{}.npz".format(self.model)):
 
-            stats = np.load("{}.npz" % self.model)
-
+            stats = np.load("{}.npz".format(self.model))
             plt.clf()
             figure, axes = plt.subplots(nrows=2, ncols=2, sharex=True, sharey="row", facecolor='W')
 
-            map(lambda x: x.set_xlabel("epoch"), axes)
-            map(lambda x: x.set_ylabel("Average Batch Loss"), axes[0])
-            map(lambda x: x.set_ylabel("Average Batch Precision@k"), axes[1])
-            plt.title(self.model_name)
+            plt.title(self.model)
 
+            axes[0,0].set_ylabel("train loss")
+            axes[0,1].set_ylabel("val loss")
+            axes[1,0].set_ylabel("Precision@1")
+            axes[1,1].set_ylabel("Precision@3")
+            axes[0,0].set_xlabel("epoch")
+            axes[0,1].set_xlabel("epoch")
+            axes[1,0].set_xlabel("epoch")
+            axes[1,1].set_xlabel("epoch")
             x = list(range(stats['epochs']))
-            l1, = axes[0, 0].plot(x, stats['train_loss'], 'bo-', label="train-loss")
-            l2, = axes[0, 1].plot(x, stats['val_loss'], 'bo-', label="val-loss")
-            l3, = axes[1, 0].plot(x, stats['val_prec1'], x , stats['train_prec1'], 'ro-', label="prec1")
-            l4, = axes[1, 1].plot(x, stats['val_prec3'], x , stats['train_prec3'], 'ro-', label="prec3")
+            l1, = axes[0, 0].plot(x, stats['train_loss'], 'b-', label="train-loss")
+            axes[0,0].legend(l1.get_label())
+            l2, = axes[0, 1].plot(x, stats['val_loss'], 'b-', label="val-loss")
+            axes[0,1].legend(l2.get_label())
+            l3, = axes[1, 0].plot(x, stats['val_prec1'],'r-', label="val-prec1")
+            l4, = axes[1, 0].plot(x, stats['train_prec1'], 'g-', label="train-prec1")
+            axes[1,0].legend([l3,l4],[l.get_label() for l in [l3,l4]])
+            l5, = axes[1, 1].plot(x, stats['val_prec3'],'r-', label="val-prec3")
+            l6, = axes[1, 1].plot(x, stats['train_prec3'], 'g-',label="train_prec3")
+            axes[1,1].legend([l5,l6],[l.get_label() for l in [l5,l6]])
 
-            map(lambda x: x.set_ylim(0, 7), axes[0])
-            map(lambda x: x.set_ylim(0, 1), axes[1])
-            lines = [l1, l2, l3, l4]
-            figure.legend(lines, [l.get_label() for l in lines])
-
-            map(lambda x: x.set_xlim(0,stats['epochs']), axes)
+            plt.tight_layout()
 
             plt.show()
         else:
