@@ -14,21 +14,23 @@
 	1\4\5\6为imageNet预训练模型。没有经过Places365数据集训练。
 	以上所有模型均来自torch模型，使用torch2pytorch convertor(https://github.com/clcarwin/convert_torch_to_pytorch)转为pytorch模型，1\4\5\6已经原作者证实可以复现ImageNet上的结果。2\3未经证实。
 
-	scene_train.py为训练代码。
-	
-	代码编写：
-		Places数据集和lsun数据集构建
-		图像预处理操作
-		网络训练(first priority)：
-		sing-GPU版/multi-GPU版		
+	AIC_scene_train.py为训练代码。	
+
+新增：
+	本地使用tensorboard:
+		首先运行python3 AIC_scene_train.py --gpus 4 --model ResNet50 --depth 32
+		其次另外本地打开一个终端：
+		ssh -L 16006:127.0.0.1:6006 username@server_address
+		我的就是chaoyang@10.65.1.181，这句命令就是将本地16006端口和服务器6006端口连接起来，tensorboard默认是在6006端口输出数据。
+		然后进入到AIC_scene_train.py文件的目录下
+		tensorboard --logdir=runs/ --port=6006
+		之后，你每运行一次AIC_scene_train.py文件，runs目录下就会自动生成对该run的事件文件。
+		然后打开浏览器：输入http://127.0.0.1:16006就可以看到训练中的数据了。
+		目前实现了loss prec@k，权重的分布。不推荐加入绘图，会导致程序卡死。
+
+	fine-tune：
+		目前实现了ResNet50 和ResNet152 ，可选择的--depth导入模型代码下面有注释。--depth表示fine-tune的深度，从最后一层算起。
 
 
-------
 
-#### Suo's Todo:
-* Learning from scratch
-	- [ ] Finish experiment framework  
-    - [ ] Start from DenseNet
-=======
-思考：
-	数据集Balanced or Unbalanced
+
