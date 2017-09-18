@@ -1,6 +1,6 @@
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import numpy as np
-import os
+# import os
 
 # loss,prec1,prec3 are Meter instances
 # loss,prec@k displays averaged loss/prec
@@ -8,9 +8,12 @@ import os
 
 class Plot(object):
 
-    def __init__(self, model_name):
+    def __init__(self, model_name,depth,lr,batchSize):
 
         self.model = model_name
+        self.depth = depth
+        self.lr = lr
+        self.batchSize = batchSize
 
     def save_stats(self, epochs,train_loss,val_loss,train_prec1,train_prec3,val_prec1,val_prec3):
 
@@ -21,7 +24,7 @@ class Plot(object):
         self.val_prec3 = val_prec3.val
         self.train_prec1 = train_prec1.val
         self.train_prec3 = train_prec3.val
-        np.savez("{}.npz".format(self.model),
+        np.savez("{}_{}_{}_{}.npz".format(self.model,self.depth,self.lr,self.batchSize),
                  epochs=self.epochs,
                  train_loss=self.train_loss,
                  val_loss=self.val_loss,
@@ -30,7 +33,7 @@ class Plot(object):
                  train_prec1=self.train_prec1,
                  train_prec3=self.train_prec3)
 
-    def plot_stats(self):
+    """def plot_stats(self):
 
         if os.path.exists("{}.npz".format(self.model)):
 
@@ -65,6 +68,7 @@ class Plot(object):
             plt.show()
         else:
             raise ValueError('specify the model name trained before')
+        """
 
 
 

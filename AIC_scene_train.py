@@ -2,6 +2,7 @@ import argparse
 import shutil
 import time
 import AIC_scene_data
+import Plot
 
 import torch.utils.data
 import torch.optim as optim
@@ -9,15 +10,14 @@ import torch
 import self_models
 import torch.nn as nn
 import torch.cuda
-import logging
 
 from torch.utils.data import DataLoader
-from torchvision import transforms
+from torchvision import transforms, utils
 from torch.nn import DataParallel
 from AIC_scene_data import AIC_scene
 from torch.autograd import Variable
-from Plot import Plot
 from Meter import Meter
+from tensorboardX import SummaryWriter
 
 def _make_dataloaders(train_set, val_set):
 
@@ -44,7 +44,8 @@ def _set_lr(optimizer, ith_epoch, epochs):
     learning_rate = args.lr * (0.1 ** (ith_epoch // args.lr_decay))
     for param_group in optimizer.param_groups:
         param_group['lr'] = learning_rate
-        print('=====> setting learning_rate to : {},{}/{}'.format(learning_rate, ith_epoch, epochs))
+
+    print('=====> setting learning_rate to : {},{}/{}'.format(learning_rate, ith_epoch, epochs))
 
 def save_checkpoint(state,path,model_name,is_best):
 
@@ -145,6 +146,7 @@ def validate(val_Loader,model,criterion,ith_epoch):
                   'Averaged Batch-Loss : %s \n' % loss_avg,
                   'Averaged Batch-Prec@1 : %s \n' % top1_avg,
                   'Averaged Batch-Prec@3 : %s \n' % top3_avg)
+
     return losses.avg(),top1.avg(),top3.avg()
 
 def accuracy(output,label,topk=(0,)):
@@ -186,21 +188,10 @@ if __name__ == '__main__':
     parser.add_argument('--lr-decay',default=30,type=int,help="learning rate decayed every lr_decay epochs")
     parser.add_argument('--resume',default=None,type=str,help="path to model to be resumed")
     parser.add_argument('--path',default="/data/chaoyang/scene_Classification",type=str,help="root path")
+    parser.add_argument('--depth',default=1,type=int,help="fine tune depth,starting from last layer")
     parser.add_argument('--pre_model_path', default="/data/chaoyang/Places_challenge2017/", type=str,
                         help="path to pre-trained models")
     args = parser.parse_args()
-
-    logger = logging.getLogger(args.model)
-    logger.setLevel(logging.DEBUG)
-    fh = logging.FileHandler("{}.log".format(args.model))
-    fh.setLevel(logging.DEBUG)
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(time)s - %(name)s - %(levelname)s - %(message)s')
-    fh.setFormatter(formatter)
-    ch.setFormatter(formatter)
-    logger.addHandler(fh)
-    logger.addHandler(ch)
 
     # pretrained models
     # DenseNet:densenet_consine_264_k48.py; trained on ImageNet, validated
@@ -213,7 +204,7 @@ if __name__ == '__main__':
     pre_models = ['DenseNet', 'ResNext1101', 'ResNext2101', 'ResNext50', 'ResNet50', 'ResNet152','DenseNet161']
     if args.model not in pre_models and args.pretrained == True: raise ValueError('please specify the right pre_trained model name!')
     models_dict = {'DenseNet' : 'densenet_cosine_264_k48',
-                   'ResNext1101' : 'resnext_101_32_4d',
+                   'ResNext1101' : 'resnext_101_32x4d',
                    'ResNext2101' : 'resnext_101_64x4d',
                    'ResNext50' : 'resnext_50_32x4d',
                    'ResNet50' : 'resnet50_places365_scratch',
@@ -223,6 +214,7 @@ if __name__ == '__main__':
     # ---------------------------------------------------
     #                                        data loading
     # ---------------------------------------------------
+
 
     train_dataset = AIC_scene(
         part="train",
@@ -306,12 +298,29 @@ if __name__ == '__main__':
             model = DataParallel(model, device_ids=list(range(args.gpus)))  # output stored in gpus[0]
             model = model.cuda()
 
+        # fix certain layers according to args.fine_tune
+        # for resnet50: optional depth is : 2,32,87,124,150,153(fine-tune all)
+        # for resnet152: optional depth is : 2,32,359,434,464,467(fine-tune all)
+        # for resnext50: optional depth is :
+        # for resnext1101 : optional depth is :
+        # for resnext2101 : optional depth is :
+        if args.depth != 1:
+            param_name = list([name for name,_ in model.named_parameters()])
+            model_params = list()
+            for name, param in model.named_parameters():
+                if name == param_name[len(param_name)-args.depth]:
+                    break
+                else:
+                    param.requires_grad = False
+            for name, param in model.named_parameters():
+                if name in param_name[-args.depth:]:
+                    model_params.append({'params':param})
+
         global optimizer
-        optimizer = optim.SGD(model.parameters(),
+        optimizer = optim.SGD(model_params if args.depth !=1 else model.parameters(),
                               lr=args.lr,
                               momentum=args.momentum,
                               weight_decay=args.weight_decay,
-
                               nesterov=True)
     else:
 
@@ -339,12 +348,17 @@ if __name__ == '__main__':
         best_prec3 = 0
         train_losses,val_losses,train_prec1,train_prec3,val_prec1,val_prec3 = Meter(),Meter(),Meter(),Meter(),Meter(),Meter()
 
-    stats = Plot(args.model)
+    stats = Plot.Plot(args.model,args.depth,args.lr,args.batchSize)
+    writer = SummaryWriter(log_dir="runs/{}_lr{}_bs{}_depth{}_gpus{}".format(args.model,args.lr,args.batchSize,args.depth,args.gpus))
+
     for ith_epoch in range(args.start_epoch,args.epochs):
 
         _set_lr(optimizer, ith_epoch, args.epochs)
 
         train_loss, _train_prec1, _train_prec3 = train(train_Loader,model,criterion,optimizer,ith_epoch)
+        writer.add_scalar('train_loss', train_loss, ith_epoch)
+        writer.add_scalar('train_prec1', _train_prec1, ith_epoch)
+        writer.add_scalar('train_prec3', _train_prec3, ith_epoch)
         train_losses.update(train_loss)
         train_prec1.update(_train_prec1)
         train_prec3.update(_train_prec3)
@@ -352,6 +366,9 @@ if __name__ == '__main__':
         # evaluate on validation set
         val_loss, _val_prec1, _val_prec3 = validate(val_Loader, model, criterion, ith_epoch)
         print("=====> Validation set : prec@1 : %s \t prec@3 : %s" % (_val_prec1, _val_prec3))
+        writer.add_scalar('val_loss', val_loss, ith_epoch)
+        writer.add_scalar('val_prec1', _val_prec1, ith_epoch)
+        writer.add_scalar('val_prec3', _val_prec3, ith_epoch)
         val_losses.update(val_loss)
         val_prec1.update(_val_prec1)
         val_prec3.update(_val_prec3)
@@ -367,12 +384,12 @@ if __name__ == '__main__':
                 'model': model,
                 'best_prec3': best_prec3,
                 'optimizer': optimizer,
-                'train_losses': train_losses.val, # list
-                'val_losses' : val_losses.val,
-                'val_prec1' : val_prec1.val,
-                'val_prec3' : val_prec3.val,
-                'train_prec1' : train_prec1.val,
-                'train_prec3' : train_prec3.val
+                'train_losses': train_losses,
+                'val_losses' : val_losses,
+                'val_prec1' : val_prec1,
+                'val_prec3' : val_prec3,
+                'train_prec1' : train_prec1,
+                'train_prec3' : train_prec3
             }, args.path , args.model, is_best)
         elif is_best:
             print('=====> setting new best precision@3 : {}'.format(best_prec3))
@@ -382,13 +399,16 @@ if __name__ == '__main__':
                 'model': model,
                 'best_prec3' : best_prec3,
                 'optimizer': optimizer,
-                'train_losses': train_losses.val,  # list
-                'val_losses': val_losses.val,
-                'val_prec1': val_prec1.val,
-                'val_prec3': val_prec3.val,
-                'train_prec1' : train_prec1.val,
-                'train_prec3' : train_prec3.val
+                'train_losses': train_losses,  
+                'val_losses': val_losses,
+                'val_prec1': val_prec1,
+                'val_prec3': val_prec3,
+                'train_prec1' : train_prec1,
+                'train_prec3' : train_prec3
             }, args.path , args.model, is_best)
 
-    stats.save_stats(args.epochs,train_losses,val_losses,train_prec1,train_prec3,val_prec1, val_prec3)
+        for name,param in model.named_parameters():
+            writer.add_histogram(name,param.clone().cpu().data.numpy(),ith_epoch)
 
+    stats.save_stats(args.epochs,train_losses,val_losses,train_prec1,train_prec3,val_prec1, val_prec3)
+    writer.close()
