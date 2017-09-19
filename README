@@ -31,6 +31,18 @@
 	fine-tune：
 		目前实现了ResNet50 和ResNet152 ，可选择的--depth导入模型代码下面有注释。--depth表示fine-tune的深度，从最后一层算起。
 
+实验：
+	1、数据量给模型带来的性能提升(fine-tune,非fine-tune无法看出数据量的效果)：
+		ImageNet(1400W images,1000 object classes)：places365_caffe(official)目前未测试
+		Place2_standard(160W images): 从ResNet50_lr1.0_bs256_depth32来看与非fine-tune相差不大，从ResNet50_lr1.0_bs256_depth87和ResNet_depth32相比，fine-tune深度越大，效果越差。
+		AIC_scene(5.3W images)：
 
+	2、网络架构带来的性能提升：
+		vgg16(导师跑的) top3准确率是90， top1准确率在76左右。与ResNet50相比差了2个百分点。
+		ResNet50_lrdecay30_bs256_lr0.1和ResNext50_lrdecay30_bs256_lr0.1来看，ResNext50 top3是91.756，ResNet50 top3 接近92，两者相差不大。
+		从ResNext1101_lrdecay30_bs128_lr0.1来看，top3最高准确率是87.205，与ResNext50相差5个百分点。batchsize从ResNet50_lrdecay15_bs128_lr0.1与ResNet50_lrdecay30_bs256_lr0.1两个模型来看，top3准确率都维持在92%左右，batchsize对模型能否找到全局最优点相差不大。
+		目前方向：
+	3、其他提升
+		
 
 
