@@ -3,7 +3,6 @@ import torch
 import AIC_scene_data
 
 from torch.nn import DataParallel
-from AIC_scene_data import scene_testA
 from torchvision import transforms
 
 def accuracy(output,label,topk=(0,)):

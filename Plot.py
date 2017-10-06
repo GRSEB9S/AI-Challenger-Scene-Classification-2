@@ -8,12 +8,17 @@ import numpy as np
 
 class Plot(object):
 
-    def __init__(self, model_name,depth,lr,batchSize):
+    def __init__(self, model_name,depth,lr,batchSize,scrop,lrdecay,stepSize,gpus,optimizer):
 
         self.model = model_name
         self.depth = depth
         self.lr = lr
         self.batchSize = batchSize
+        self.scrop = scrop
+        self.lrdecay = lrdecay
+        self.gpus = gpus
+        self.optimizer = optimizer
+        self.stepSize = stepSize
 
     def save_stats(self, epochs,train_loss,val_loss,train_prec1,train_prec3,val_prec1,val_prec3):
 
@@ -24,7 +29,8 @@ class Plot(object):
         self.val_prec3 = val_prec3.val
         self.train_prec1 = train_prec1.val
         self.train_prec3 = train_prec3.val
-        np.savez("{}_{}_{}_{}.npz".format(self.model,self.depth,self.lr,self.batchSize),
+        np.savez("{}_depth{}_lr{}_batchSize{}_scale{}_lrdecay{}_gpus{}_optimizer{}_setepSize{}.npz".format(
+            self.model,self.depth,self.lr,self.batchSize,self.scrop,self.lrdecay,self.gpus,self.optimizer,self.stepSize),
                  epochs=self.epochs,
                  train_loss=self.train_loss,
                  val_loss=self.val_loss,
@@ -33,7 +39,8 @@ class Plot(object):
                  train_prec1=self.train_prec1,
                  train_prec3=self.train_prec3)
 
-    """def plot_stats(self):
+    """
+    def plot_stats(self):
 
         if os.path.exists("{}.npz".format(self.model)):
 
@@ -68,7 +75,7 @@ class Plot(object):
             plt.show()
         else:
             raise ValueError('specify the model name trained before')
-        """
+    """
 
 
 
