@@ -392,9 +392,10 @@ class Normalize(object):
                 for t,m,s in zip(sample['image'][i],self.mean,self.std):
                     t.sub_(m).div_(s)
             return {'image':sample['image'],'label':sample['label'],'idx':sample['idx']}
-        for t, m, s in zip(sample['image'], self.mean, self.std):
-            t.sub_(m).div_(s)
-        return {'image':sample['image'],'label':sample['label'],'idx':sample['idx']}
+        else:
+            for t, m, s in zip(sample['image'], self.mean, self.std):
+                t.sub_(m).div_(s)
+            return {'image':sample['image'],'label':sample['label'],'idx':sample['idx']}
 
 
 class AIC_scene(Dataset):
@@ -454,8 +455,8 @@ class AIC_scene(Dataset):
         if self.Transform:
             tsfm_sample = self.Transform(sample)
             return tsfm_sample
-
-        return sample
+        else:
+            return sample
 
 class AIC_scene_test(Dataset):
     global id2chi, id2eng, sub_path, img_path
