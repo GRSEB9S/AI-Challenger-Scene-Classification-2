@@ -46,8 +46,7 @@ def _set_lr(optimizer, ith_epoch, epochs, cosine=False):
     if cosine:
         learning_rate = 0.5 * args.lr * (1 + math.cos(math.pi * ith_epoch / epochs))
     else:
-        learning_rate = args.lr * (0.2 ** (ith_epoch // args.lr_decay))
-    learning_rate = args.lr * (args.stepSize ** (ith_epoch // args.lr_decay))
+        learning_rate = args.lr * (args.stepSize ** (ith_epoch // args.lr_decay))
     for param_group in optimizer.param_groups:
         param_group['lr'] = learning_rate
 
@@ -387,7 +386,7 @@ if __name__ == '__main__':
                                   lr=args.lr,
                                   momentum=args.momentum,
                                   weight_decay=args.weight_decay,
-                                  nesterov=True)
+                                  nesterov=False)
         elif args.optimizer == "Adam":
             optimizer = optim.Adam(model_params if args.depth !=1 else model.parameters(),
                                    lr=args.lr,
