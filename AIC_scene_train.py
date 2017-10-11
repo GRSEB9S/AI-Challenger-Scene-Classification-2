@@ -3,6 +3,7 @@ import shutil
 import time
 import AIC_scene_data
 import Plot
+import math
 
 import torch.utils.data
 import torch.optim as optim
@@ -38,14 +39,18 @@ def _make_dataloaders(train_set, val_set):
     return train_Loader,val_Loader
 
 
-def _set_lr(optimizer, ith_epoch, epochs):
+def _set_lr(optimizer, ith_epoch, epochs, cosine=False):
 
     # sets the learning rate of initial lr decayed by 10 every 30 epochs
-    learning_rate = args.lr * (0.1 ** (ith_epoch // args.lr_decay))
+    if cosine:
+        learning_rate = 0.5 * args.lr * (1 + math.cos(math.pi * ith_epoch / epochs))
+    else:
+        learning_rate = args.lr * (0.2 ** (ith_epoch // args.lr_decay))
     for param_group in optimizer.param_groups:
         param_group['lr'] = learning_rate
 
     print('=====> setting learning_rate to : {},{}/{}'.format(learning_rate, ith_epoch, epochs))
+
 
 def save_checkpoint(state,path,model_name,is_best):
 
@@ -177,11 +182,15 @@ if __name__ == '__main__':
     parser.add_argument('--model',default='ResNet152',type=str,help="which model:DenseNet,ResNext,ResNet")
     parser.add_argument('--batchSize',default=256,type=int,help="batch Size")
     parser.add_argument('--momentum',default=0.9,type=float,help="momentum")
-    parser.add_argument('--pretrained',default=True,type=bool,help="whether to use pretrained models or not")
+    parser.add_argument('--pretrained',dest='pretrained',action='store_true',help="use pretrained models")
+    parser.add_argument('--no-pretrained',dest='pretrained',action='store_false',help='not use pretrained models')
+    parser.set_defaults(pretrained=True)
     parser.add_argument('--workers',default=8,type=int,help="number of data loading workers")
     parser.add_argument('--epochs',default=150,type=int,help="number of training epochs")
     parser.add_argument('--start-epoch',type=int,default=0,help="start epoch, useful when retraining")
     parser.add_argument('--lr','--learning-rate',type=float,default=0.1,help="learning rate")
+    parser.add_argument('--cosine',dest='cosine',action='store_true')
+    parser.add_argument('--adam',dest='adam',action='store_true')
     parser.add_argument('--weight-decay',default=1e-4,type=float,help='weight decay')
     parser.add_argument('--print-freq',default=50,type=int,help="print training statics every print_freq batches")
     parser.add_argument('--save-freq',default=10,type=int,help="save checkpoint every save_freq epochs")
@@ -201,7 +210,7 @@ if __name__ == '__main__':
     # ResNet50:resnet50_places365_scratch.py, trained on Places365_standard, unvalidated
     # ResNet152:resnet152_places365_scratch.py, trained on Places365_standard, unvalidated
 
-    pre_models = ['DenseNet', 'ResNext1101', 'ResNext2101', 'ResNext50', 'ResNet50', 'ResNet152','DenseNet161']
+    pre_models = ['DenseNet', 'ResNext1101', 'ResNext2101', 'ResNext50', 'ResNet50', 'ResNet152', 'pyResNet50']
     if args.model not in pre_models and args.pretrained == True: raise ValueError('please specify the right pre_trained model name!')
     models_dict = {'DenseNet' : 'densenet_cosine_264_k48',
                    'ResNext1101' : 'resnext_101_32x4d',
@@ -268,15 +277,17 @@ if __name__ == '__main__':
                 import resnet152_places365_scratch
                 model = resnet152_places365_scratch.resnet152_places365
 
-            if args.model == pre_models[6]:
-                model = torch.load("{}{}.pth".format(pre_model_path,models_dict[args.model]))
+            if args.model == 'pyResNet50':
+                model = torch.load("{}whole_resnet50_places365.pth.tar".format(pre_model_path))
                 model.classifier = nn.Linear(2208,80)
             else:
                 pre_state_dict = torch.load("{}{}.pth".format(pre_model_path, models_dict[args.model]))
                 layers = list(pre_state_dict.keys())
                 pre_state_dict.pop(layers[-1])
                 pre_state_dict.pop(layers[-2])
-                model.load_state_dict(pre_state_dict)
+                model_dict = model.state_dict()
+                model_dict.update(pre_state_dict)
+                model.load_state_dict(model_dict)
 
         else:
 
@@ -286,8 +297,11 @@ if __name__ == '__main__':
                 model = self_models.DenseNetEfficient()
             elif args.model == 'DenseNetEfficientMulti':
                 model = self_models.DenseNetEfficientMulti()
+            elif args.model == 'ResNet50':
+                import resnet50_places365_scratch
+                model = resnet50_places365_scratch.resnet50_places365
             else:
-                raise ValueError('please specify the right created self_model name')
+                model = self_models.DenseNetVOC()
 
         if args.gpus == 1:
 
@@ -317,7 +331,10 @@ if __name__ == '__main__':
                     model_params.append({'params':param})
 
         global optimizer
-        optimizer = optim.SGD(model_params if args.depth !=1 else model.parameters(),
+        if args.adam:
+            optimizer = optim.Adam(model_params if args.depth !=1 else model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+        else:
+            optimizer = optim.SGD(model_params if args.depth !=1 else model.parameters(),
                               lr=args.lr,
                               momentum=args.momentum,
                               weight_decay=args.weight_decay,
@@ -349,14 +366,14 @@ if __name__ == '__main__':
         train_losses,val_losses,train_prec1,train_prec3,val_prec1,val_prec3 = Meter(),Meter(),Meter(),Meter(),Meter(),Meter()
 
     stats = Plot.Plot(args.model,args.depth,args.lr,args.batchSize)
-    writer = SummaryWriter(log_dir="runs/{}_lr{}_bs{}_depth{}_gpus{}".format(args.model,args.lr,args.batchSize,args.depth,args.gpus))
-
-    fig, host = plt.subplots()
-    par1 = host.twinx()
+    writer = SummaryWriter(log_dir="runs/{}_adam_rs7_lr{}_bs{}_epochs{}_depth{}_gpus{}".format(args.model,args.lr,args.batchSize,args.epochs,args.depth,args.gpus))
 
     for ith_epoch in range(args.start_epoch,args.epochs):
 
-        _set_lr(optimizer, ith_epoch, args.epochs)
+        if args.adam:
+            pass
+        else:
+            _set_lr(optimizer, ith_epoch, args.epochs, args.cosine)
 
         train_loss, _train_prec1, _train_prec3 = train(train_Loader,model,criterion,optimizer,ith_epoch)
         writer.add_scalar('train_loss', train_loss, ith_epoch)
