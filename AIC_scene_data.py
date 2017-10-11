@@ -77,6 +77,47 @@ class Scale(object):
         else:
             return {'image' : sample['image'].resize(self.size, self.interpolation),'label':sample['label'],'idx' : sample['idx']}
 
+class RandomScaleCrop(object):
+
+    def __init__(self,interpolation=Image.BILINEAR):
+        self.size = random.choice([256,384,512])
+        self.cropSize = {"256":224,"384":336,"512":448}
+        self.interpolation = interpolation
+
+    def __call__(self, sample):
+
+        w, h = sample['image'].size
+        if (w <= h and w == self.size) or (h <= w and h == self.size):
+            return sample
+        if w < h:
+            ow = self.size
+            oh = int(self.size * h / w)
+            img = sample['image'].resize((ow, oh), self.interpolation)
+        else:
+            oh = self.size
+            ow = int(self.size * w / h)
+            img = sample['image'].resize((ow, oh), self.interpolation)
+
+        for attempt in range(100):
+            area = img.size[0] * img.size[1]
+            target_area = random.uniform(0.08, 1.0) * area
+            aspect_ratio = random.uniform(3. / 4, 4. / 3)
+
+            w = int(round(math.sqrt(target_area * aspect_ratio)))
+            h = int(round(math.sqrt(target_area / aspect_ratio)))
+
+            if random.random() < 0.5:
+                w, h = h, w
+
+            if w <= img.size[0] and h <= img.size[1]:
+                x1 = random.randint(0, img.size[0] - w)
+                y1 = random.randint(0, img.size[1] - h)
+
+                img = img.crop((x1, y1, x1 + w, y1 + h))
+                assert(img.size == (w, h))
+
+                return {'image':img.resize((self.cropSize[self.size], self.cropSize[self.size]), self.interpolation),'label':sample['label'],'idx':sample['idx']}
+
 class CenterCrop(object):
     """Crops the given PIL.Image at the center.
 
@@ -160,7 +201,7 @@ class supervised_Crop(object):
             interpolation: Default: PIL.Image.BILINEAR
         """
 
-    def __init__(self,crop,path,interpolation=Image.BILINEAR):
+    def __init__(self,crop, path, interpolation=Image.BILINEAR):
         if not isinstance(crop,tuple):
             raise ValueError('specify the crop size(tuple)')
         self.crop = crop # 224, 336, 448 images already been scaled to (256,256),(384,384),(512,512)
