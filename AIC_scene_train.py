@@ -31,7 +31,7 @@ def _make_dataloaders(train_set, val_set):
                               drop_last=True)
 
     val_Loader = DataLoader(val_set,
-                            batch_size=int(args.batchSize/16),
+                            batch_size=int(args.batchSize/8),
                             shuffle=False,
                             num_workers=args.workers,
                             pin_memory=True,
@@ -126,21 +126,17 @@ def validate(val_Loader,model,criterion,ith_epoch):
     end = time.time()
     for ith_batch, data in enumerate(val_Loader):
 
-        print(data['image'][1])
-        print(data['label'].size)
         # Forward pass
         tmp = list()
-        final_output = torch.zeros(args.batchSize // 16, 80).cuda()
+        final_output = torch.zeros(args.batchSize // 8, 80).cuda()
         for i in range(10):
             input = data['image'][i]
-            label = data['label'][i]
-            input, label = input.cuda(), label.cuda()
-            input_var = Variable(input[i])
-            label_var = Variable(label[i])
-            output = model(input_var)  # 4 x 80
+            input = input.cuda()
+            input_var = Variable(input)
+            output = model(input_var)  # args.batchSize //8  x 80
             tmp.append(output.data)
 
-        for i in range(args.batchSize//16):
+        for i in range(args.batchSize//8):
             for j in range(10):
                 final_output[i,:]+=tmp[j][i,:]
             final_output[i,:].div_(10.0)
@@ -153,9 +149,9 @@ def validate(val_Loader,model,criterion,ith_epoch):
         losses.update(loss.data[0])
         top1.update(prec1)
         top3.update(prec3)
-        for i in range(args.batchSize//16):
-            cls_top1[str(label[i])].update(cls1[i])
-            cls_top3[str(label[i])].update(cls3[i])
+        for i in range(args.batchSize//8):
+            cls_top1[str(data['label'][i])].update(cls1[i])
+            cls_top3[str(data['label'][i])].update(cls3[i])
 
         batch_time.update(time.time() - end)
         end = time.time()
@@ -281,7 +277,7 @@ if __name__ == '__main__':
 
     stats = Plot.Plot(args.model,args.lr,args.depth,args.batchSize,args.scrop,args.lr_decay,args.stepSize,args.gpus,args.optimizer)
     writer = SummaryWriter(
-        log_dir="run/{}_lr{}_bs{}_depth{}_lrdecay{}_stepSize{}_gpus{}_scale{}_optimizer{}".format(
+        log_dir="runs/{}_lr{}_bs{}_depth{}_lrdecay{}_stepSize{}_gpus{}_scale{}_optimizer{}".format(
             args.model, args.lr, args.batchSize,args.depth,args.lr_decay,args.stepSize,args.gpus,args.scrop,args.optimizer))
 
     # display only a batch of image without undermining program's speed
