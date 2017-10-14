@@ -253,7 +253,8 @@ if __name__ == '__main__':
         part="train",
         path = args.path,
         Transform=transforms.Compose([
-            AIC_scene_data.RandomSizedCrop(args.scrop),
+            AIC_scene_data.RandomScaleCrop(),
+            # AIC_scene_data.RandomSizedCrop(args.scrop),
             # AIC_scene_data.supervised_Crop((args.scrop,args.scrop),os.path.join(args.path,"AIC_train_scrop224")),
             AIC_scene_data.RandomHorizontalFlip(),
             AIC_scene_data.ToTensor(),  # pixel values range from 0.0 to 1.0
