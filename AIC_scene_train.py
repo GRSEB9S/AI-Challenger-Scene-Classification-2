@@ -233,7 +233,7 @@ if __name__ == '__main__':
     # ResNet50:resnet50_places365_scratch.py, trained on Places365_standard, unvalidated
     # ResNet152:resnet152_places365_scratch.py, trained on Places365_standard, unvalidated
 
-    pre_models = ['DenseNet', 'ResNext1101', 'ResNext2101', 'ResNext50', 'ResNet50', 'ResNet152','DenseNet161','ChampResNet152']
+    pre_models = ['DenseNet', 'ResNext1101', 'ResNext2101', 'ResNext50', 'ResNet50', 'ResNet152','DenseNet161','ChampResNet152','ResNet50AIC80','ResNet50GWAP','ResNet50MeanMax']
     if args.model not in pre_models and args.pretrained == True: raise ValueError('please specify the right pre_trained model name!')
     models_dict = {'DenseNet' : 'densenet_cosine_264_k48',
                    'ResNext1101' : 'resnext_101_32x4d',
@@ -243,7 +243,7 @@ if __name__ == '__main__':
                    'ResNet152' : 'resnet152_places365_scratch',
                    'ChampResNet152' : 'Places2_365_CNN'}
     pre_model_path = args.pre_model_path
-
+    crop_dict = {224:256,320:395}
     # ---------------------------------------------------
     #                                        data loading
     # ---------------------------------------------------
@@ -265,8 +265,8 @@ if __name__ == '__main__':
         part="val",
         path = args.path,
         Transform=transforms.Compose([
-            AIC_scene_data.Scale(256),
-            AIC_scene_data.TenCrop(224),
+            AIC_scene_data.Scale(crop_dict[args.scrop]),
+            AIC_scene_data.TenCrop(args.scrop),
             AIC_scene_data.ToTensor(eval=True),
             AIC_scene_data.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225],
@@ -318,6 +318,15 @@ if __name__ == '__main__':
             elif args.model == pre_models[7]:
                 import Places2_365_CNN
                 model = Places2_365_CNN.resnet152_places365
+            elif args.model == pre_models[8]:
+                import resnet50_places365_aic80
+                model = resnet50_places365_aic80.resnet50_places365
+            elif args.model == pre_models[9]:
+                import resnet50_places365_gwap
+                model = resnet50_places365_gwap.resnet50_places365
+            elif args.model == pre_models[10]:
+                import resnet50_places365_meanmax
+                model = resnet50_places365_meanmax.resnet50_places365
 
             if args.model == 'pyResNet50':
                 model = torch.load("{}whole_resnet50_places365.pth.tar".format(pre_model_path))
@@ -325,6 +334,19 @@ if __name__ == '__main__':
             elif args.model == pre_models[7]:
                 state_dict = torch.load("{}{}.pth".format(pre_model_path, models_dict[args.model]))
                 model.load_state_dict(state_dict)
+            elif args.model == pre_models[8]:
+                pre_state_dict = torch.load("{}{}.pth".format(pre_model_path, models_dict['ResNet50']))
+                model_dict = model.state_dict()
+                model_dict.update(pre_state_dict)
+                model.load_state_dict(model_dict)
+            elif args.model in [pre_models[9], pre_models[10]]:
+                pre_state_dict = torch.load("{}{}.pth".format(pre_model_path, models_dict['ResNet50']))
+                layers = list(pre_state_dict.keys())
+                pre_state_dict.pop(layers[-1])
+                pre_state_dict.pop(layers[-2])
+                model_dict = model.state_dict()
+                model_dict.update(pre_state_dict)
+                model.load_state_dict(model_dict) 
             else:
                 pre_state_dict = torch.load("{}{}.pth".format(pre_model_path, models_dict[args.model]))
                 layers = list(pre_state_dict.keys())
@@ -382,7 +404,7 @@ if __name__ == '__main__':
                                   lr=args.lr,
                                   momentum=args.momentum,
                                   weight_decay=args.weight_decay,
-                                  nesterov=False)
+                                  nesterov=True)
         elif args.optimizer == "Adam":
             optimizer = optim.Adam(model_params if args.depth !=1 else model.parameters(),
                                    lr=args.lr,
