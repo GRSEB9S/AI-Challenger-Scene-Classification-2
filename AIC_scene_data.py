@@ -116,7 +116,7 @@ class RandomScaleCrop(object):
                 img = img.crop((x1, y1, x1 + w, y1 + h))
                 assert(img.size == (w, h))
 
-                return {'image':img.resize((self.cropSize[self.size], self.cropSize[self.size]), self.interpolation),'label':sample['label'],'idx':sample['idx']}
+                return {'image':img.resize((224, 224), self.interpolation),'label':sample['label'],'idx':sample['idx']}
 
 class CenterCrop(object):
     """Crops the given PIL.Image at the center.
@@ -438,6 +438,40 @@ class Normalize(object):
                 t.sub_(m).div_(s)
             return {'image':sample['image'],'label':sample['label'],'idx':sample['idx']}
 
+def label_shuffle(train,shuffle,self,part,path,sub_path,img_path):
+
+    with open(train) as f:
+        lines = f.readlines()
+        cls_id = np.zeros(len(lines), dtype=np.int8)
+        cls_num, cls_idx, final = list(), list(), list()
+        for i in range(len(lines)):
+            cls_id[i] = lines[i].split(" ")[1]
+        for i in range(80):
+            cls_num.append(len(np.where(cls_id == i)[0]))
+            cls_idx.append(list(np.argwhere(cls_id == i)[:, 0]))
+        maximum, minimum = max(cls_num), min(cls_num)
+        idx = list(range(maximum))
+        for i in range(80):
+            random.shuffle(idx)
+            random_idx = [k.item() for k in np.mod(idx, cls_num[i])]
+            this = cls_idx[i]
+            for j in range(maximum):
+                final.append(this[random_idx[j]])
+        random.shuffle(final)
+        assert len(final) == maximum * 80
+
+    shuff_lines = list()
+    with open(shuffle, 'w') as file:
+        for i in range(len(final)):
+            shuff_lines.append(lines[final[i]])
+        file.writelines(shuff_lines)
+
+    with open(self.read) as f:
+        lines = f.readlines()
+        for i in range(len(lines)):
+            img_name, label_index = lines[i].split(' ')
+            self.image.append(os.path.join(path,sub_path[part],img_path[part],img_name))
+            self.label.append(int(label_index))
 
 class AIC_scene(Dataset):
 
@@ -462,31 +496,37 @@ class AIC_scene(Dataset):
                     id2eng[row[0]] = row[2]
 
             f = json.load(open(os.path.join(path,sub_path[part],json_name[part])))
-            with open(os.path.join(path,sub_path[part],"%s_label.txt" % part),"w") as f_label:
+            with open(os.path.join(path,sub_path[part],"train_label.txt"),'w') as f_label:
                 for i in range(len(f)):
                     dict = f[i]
                     f_label.write("{} {}\n".format(dict['image_id'],dict['label_id']))
         else:
             raise ValueError('specify the root path!')
 
-        self.read = os.path.join(path, sub_path[part], "%s_label.txt" % part)
+        if part=="train":
+            self.read = os.path.join(path, sub_path[part], "shuffle_label.txt")
+        else:
+            self.read = os.path.join(path,sub_path[part],"%s_label.txt" % part)
         self.image, self.label = list(), list()
+
+        if part == "train":
+            label_shuffle(os.path.join(path,sub_path[part],"train_label.txt"),self.read,self,part,path,sub_path,img_path)
 
         # read txt file, store full image/label path in self instance
         with open(self.read) as f:
             lines = f.readlines()
             for i in range(len(lines)):
-                img_name,label_index = lines[i].split(' ')
-                self.image.append(os.path.join(path,sub_path[part],img_path[part],img_name))
+                img_name, label_index = lines[i].split(' ')
+                self.image.append(os.path.join(path, sub_path[part], img_path[part], img_name))
                 self.label.append(int(label_index))
 
-        self.part, self.path, self.Transform, self.id2chi, self.id2eng = part, path, Transform, id2chi, id2eng
+        self.part, self.Transform, self.id2chi, self.id2eng = part ,Transform, id2chi, id2eng
 
     def __len__(self):
 
-        with open(self.read, 'r') as f:
-            lenth = len(f.readlines())
-        return lenth
+        with open(self.read,'r') as f:
+            length = len(f.readlines())
+        return length
 
     def __getitem__(self, item):
 
@@ -558,8 +598,6 @@ class AIC_scene_test(Dataset):
             return tsfm_sample
 
         return sample
-
-
 
 class places365std_AIC(Dataset):
 

@@ -14,12 +14,14 @@ if __name__ == "__main__":
     parser.add_argument("--model",default="/data/chaoyang/scene_Classification/ResNet50_best_lr0.1_depth32_bs256.pth.tar",
                         type=str,help="abs path for testing model")
     parser.add_argument("--path",default="/data/chaoyang/scene_Classification",type=str,help="root path")
+    parser.add_argument("--subpath",default="ai_challenger_scene_test_a_20170922")
     parser.add_argument("--scrop",default=(224,224))
     args = parser.parse_args()
 
     checkpoint = torch.load(args.model)
     print("==========> val_best_prec3 %s" % checkpoint['best_prec3'])
     model = checkpoint['model']
+    model.eval()
 
     AIC_scene_testA = AIC_scene_data.AIC_scene_test(
         part="testA",
@@ -41,16 +43,15 @@ if __name__ == "__main__":
 
             input,img_name = data['image'].cuda(),data['label']
             input_Var = Variable(input)
-            print(img_name[0])
-            print(img_name[-1])
 
             output = model(input_Var) # batchSize x n_classes
 
             _, pred_index = torch.topk(output,k=3,dim=1,largest=True,sorted=True)  # descending order
             pred_index = pred_index.data.cpu().numpy()
             for j in range(input.size(0)):
-                record.append({"label_id":list(pred_index[j,:]),"image_id":img_name[j]})
+                record.append({"label_id":[k.item() for k in pred_index[j,:]],"image_id":img_name[j]})
         json.dump(record,f)
+        int()
 
 
 

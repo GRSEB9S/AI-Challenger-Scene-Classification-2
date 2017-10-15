@@ -1,10 +1,9 @@
-import argparse
+import options
 import shutil
 import time
 import AIC_scene_data
-import Plot
-import os
 
+import os
 import torch.utils.data
 import torch.optim as optim
 import torch
@@ -12,13 +11,14 @@ import self_models
 import torch.nn as nn
 import torch.cuda
 
+from Meter import Meter
 from torch.utils.data import DataLoader
 from torchvision import transforms, utils
 from torch.nn import DataParallel
 from AIC_scene_data import AIC_scene
 from torch.autograd import Variable
-from Meter import Meter
 from tensorboardX import SummaryWriter
+from labelSmooth_Loss import LSR
 
 def _make_dataloaders(train_set, val_set):
 
@@ -26,18 +26,15 @@ def _make_dataloaders(train_set, val_set):
                               batch_size=args.batchSize,
                               shuffle=True,
                               num_workers=args.workers,
-                              pin_memory=True,
-                              drop_last=True)
+                              pin_memory=True)
 
     val_Loader = DataLoader(val_set,
                             batch_size=int(args.batchSize/8),
                             shuffle=False,
                             num_workers=args.workers,
-                            pin_memory=True,
-                            drop_last=True)
+                            pin_memory=True)
 
     return train_Loader,val_Loader
-
 
 def _set_lr(optimizer, ith_epoch, epochs):
 
@@ -47,7 +44,7 @@ def _set_lr(optimizer, ith_epoch, epochs):
 
     print('=====> setting learning_rate to : {},{}/{}'.format(learning_rate, ith_epoch, epochs))
 
-def save_checkpoint(state,path,model_name,lr,depth,batchsize,scale,lrdecay,gpus,optimizer,is_best):
+def _save_checkpoint(state,path,model_name,lr,depth,batchsize,scale,lrdecay,gpus,optimizer,is_best):
 
     checkpoint_path = "{}/{}_{}_lr{}_depth{}_bs{}_scale{}_lrdecay{}_gpus{}_optimizer{}.pth.tar".\
         format(path,model_name,state['epoch']-1,lr,depth,batchsize,scale,lrdecay,gpus,optimizer)
@@ -57,7 +54,7 @@ def save_checkpoint(state,path,model_name,lr,depth,batchsize,scale,lrdecay,gpus,
         shutil.copyfile(checkpoint_path,"{}/{}_best_lr{}_depth{}_bs{}_scale{}_lrdecay{}_gpus{}_optimizer{}.pth.tar".
                         format(path,model_name,lr,depth,batchsize,scale,lrdecay,gpus,optimizer))
 
-def train(train_Loader, model, criterion, optimizer, ith_epoch,):
+def train(train_Loader,model,criterion,optimizer,ith_epoch):
 
     data_time = Meter() # measure average batch data loading time
     batch_time = Meter() # measure average batch computing time, including forward and backward
@@ -66,7 +63,6 @@ def train(train_Loader, model, criterion, optimizer, ith_epoch,):
     prec3 = Meter()
 
     model.train()
-
     end = time.time()
     for ith_batch, data in enumerate(train_Loader):
 
@@ -113,11 +109,12 @@ def validate(val_Loader,model,criterion,ith_epoch):
     losses = Meter()  # record average losses across all mini-batches within an epoch
     top1 = Meter()  # record average top1 precision across all mini-batches within an epoch
     top3 = Meter()  # record average top3 precision
-    cls_top1 = dict().fromkeys(train_dataset.id2eng.keys(),Meter())
-    cls_top3 = dict().fromkeys(train_dataset.id2eng.keys(),Meter())
+    cls_top1,cls_top3 = dict(),dict()
+    for i in range(80):
+        cls_top1[i] = Meter()
+        cls_top3[i] = Meter()
 
     model.eval()
-
     end = time.time()
     for ith_batch, data in enumerate(val_Loader):
 
@@ -145,8 +142,8 @@ def validate(val_Loader,model,criterion,ith_epoch):
         top1.update(prec1)
         top3.update(prec3)
         for i in range(args.batchSize//8):
-            cls_top1[str(data['label'][i])].update(cls1[i])
-            cls_top3[str(data['label'][i])].update(cls3[i])
+            cls_top1[data['label'][i]].update(cls1[i])
+            cls_top3[data['label'][i]].update(cls3[i])
 
         batch_time.update(time.time() - end)
         end = time.time()
@@ -192,29 +189,7 @@ def accuracy(output,label,val=False,topk=(0,)):
 
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser(description="scene_classification for AI Challenge")
-    parser.add_argument('--gpus',default=torch.cuda.device_count(),type=int,help="how many Gpus to be used")
-    parser.add_argument('--model',default='ResNet152',type=str,help="which model:DenseNet,ResNext,ResNet")
-    parser.add_argument('--batchSize',default=256,type=int,help="batch Size")
-    parser.add_argument('--momentum',default=0.9,type=float,help="momentum")
-    parser.add_argument('--pretrained',default=True,type=bool,help="whether to use pretrained models or not")
-    parser.add_argument('--workers',default=8,type=int,help="number of data loading workers")
-    parser.add_argument('--epochs',default=30,type=int,help="number of training epochs")
-    parser.add_argument('--start-epoch',type=int,default=0,help="start epoch, useful when retraining")
-    parser.add_argument('--lr','--learning-rate',type=float,default=0.1,help="learning rate")
-    parser.add_argument('--weight-decay',default=1e-4,type=float,help='weight decay')
-    parser.add_argument('--print-freq',default=50,type=int,help="print training statics every print_freq batches")
-    parser.add_argument('--save-freq',default=10,type=int,help="save checkpoint every save_freq epochs")
-    parser.add_argument('--lr-decay',default=5,type=int,help="learning rate decayed every lr_decay epochs")
-    parser.add_argument('--resume',default=None,type=str,help="path to model to be resumed")
-    parser.add_argument('--path',default="/data/chaoyang/scene_Classification",type=str,help="root path")
-    parser.add_argument('--depth',default=1,type=int,help="fine tune depth,starting from last layer")
-    parser.add_argument('--scrop',default=224,type=int,help="resolution of training images")
-    parser.add_argument('--optimizer',default="SGD",type=str,help="optimizer type")
-    parser.add_argument('--stepSize',default=0.2,type=float,help="lr decayed by stepSize")
-    parser.add_argument('--pre_model_path', default="/data/chaoyang/Places_challenge2017/", type=str,
-                        help="path to pre-trained models")
-    args = parser.parse_args()
+    args = options.parse_args()
 
     # pretrained models
     # DenseNet:densenet_consine_264_k48.py; trained on ImageNet, validated
@@ -244,13 +219,17 @@ if __name__ == '__main__':
         part="train",
         path = args.path,
         Transform=transforms.Compose([
-            AIC_scene_data.RandomScaleCrop(),
-            # AIC_scene_data.RandomSizedCrop(args.scrop),
+            # AIC_scene_data.RandomScaleCrop(),
+            AIC_scene_data.RandomSizedCrop(args.scrop),
             # AIC_scene_data.supervised_Crop((args.scrop,args.scrop),os.path.join(args.path,"AIC_train_scrop224")),
             AIC_scene_data.RandomHorizontalFlip(),
             AIC_scene_data.ToTensor(),  # pixel values range from 0.0 to 1.0
-            AIC_scene_data.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225]) # ImageNet
+            # AIC_scene_data.Normalize(mean=[0.4951, 0.476, 0.4457],
+            #                          std=[0.2832, 0.2788, 0.2907]) # 3 x 224 x 224
+            # AIC_scene_data.Normalize(mean=[0.4952, 0.476 0.4457],
+            #                          std=[0.2858, 0.2814, 0.2931]) # 3 x 336 x 336
+            # AIC_scene_data.Normalize(mean=[0.4927, 0.4735, 0.4435],
+            #                          std=[0.2884, 0.2839, 0.2952])
         ]))
     print(train_dataset.__len__())
     val_dataset = AIC_scene(
@@ -267,7 +246,6 @@ if __name__ == '__main__':
     print(val_dataset.__len__())
     train_Loader,val_Loader = _make_dataloaders(train_dataset,val_dataset)
 
-    stats = Plot.Plot(args.model,args.lr,args.depth,args.batchSize,args.scrop,args.lr_decay,args.stepSize,args.gpus,args.optimizer)
     writer = SummaryWriter(
         log_dir="runs/{}_lr{}_bs{}_depth{}_lrdecay{}_stepSize{}_gpus{}_scale{}_optimizer{}".format(
             args.model, args.lr, args.batchSize,args.depth,args.lr_decay,args.stepSize,args.gpus,args.scrop,args.optimizer))
@@ -382,15 +360,11 @@ if __name__ == '__main__':
         best_prec3 = checkpoint['best_prec3']
         model = checkpoint['model']
         optimizer = checkpoint['optimizer']
-        train_losses,val_losses = checkpoint['train_losses'],checkpoint['val_losses']
-        val_prec1, val_prec3 = checkpoint['val_prec1'], checkpoint['val_prec3']
-        train_prec1, train_prec3 = checkpoint['train_prec1'], checkpoint['train_prec3']
-        best_prec3 = checkpoint['best_prec3']
         print("=====> loaded checkpoint '{}' (epoch {})"
               .format(args.resume, checkpoint['epoch']))
 
     # define loss function and optimizer
-    criterion = nn.CrossEntropyLoss().cuda()
+    criterion = nn.LSR().cuda()
 
     # ---------------------------------------------------
     #                                               train
@@ -398,19 +372,21 @@ if __name__ == '__main__':
 
     if args.resume is None:
         best_prec3 = 0
-        train_losses,val_losses,train_prec1,train_prec3,val_prec1,val_prec3 = Meter(),Meter(),Meter(),Meter(),Meter(),Meter()
 
     for ith_epoch in range(args.start_epoch,args.epochs):
 
         # _set_lr(optimizer, ith_epoch, args.epochs)
+        AIC_scene_data.label_shuffle(os.path.join(args.path,"ai_challenger_scene_train_20170904","train_label.txt"),
+                                     os.path.join(args.path,"ai_challenger_scene_train_20170904","shuffle_label.txt"),
+                                     train_dataset,
+                                     part="train",path=args.path,
+                                     sub_path="ai_challenger_scene_train_20170904",
+                                     img_path="scene_train_images_20170904")
 
         train_loss, _train_prec1, _train_prec3 = train(train_Loader,model,criterion,optimizer,ith_epoch)
         writer.add_scalar('train_loss', train_loss, ith_epoch)
         writer.add_scalar('train_prec1', _train_prec1, ith_epoch)
         writer.add_scalar('train_prec3', _train_prec3, ith_epoch)
-        train_losses.update(train_loss)
-        train_prec1.update(_train_prec1)
-        train_prec3.update(_train_prec3)
 
         # evaluate on validation set
         val_loss, _val_prec1, _val_prec3, val_cls1, val_cls3 = validate(val_Loader, model, criterion, ith_epoch)
@@ -419,51 +395,34 @@ if __name__ == '__main__':
         writer.add_scalar('val_prec1', _val_prec1, ith_epoch)
         writer.add_scalar('val_prec3', _val_prec3, ith_epoch)
         for i in train_dataset.id2eng.keys():
-            writer.add_scalar("{}_cls1".format(train_dataset.id2eng[i]), val_cls1[i].avg(), ith_epoch)
-            writer.add_scalar("{}_cls3".format(train_dataset.id2eng[i]), val_cls3[i].avg(), ith_epoch)
-
-        val_losses.update(val_loss)
-        val_prec1.update(_val_prec1)
-        val_prec3.update(_val_prec3)
+            writer.add_scalar("{}_cls1".format(train_dataset.id2eng[i]), val_cls1[int(i)].avg(), ith_epoch)
+            writer.add_scalar("{}_cls3".format(train_dataset.id2eng[i]), val_cls3[int(i)].avg(), ith_epoch)
 
         # determine if model is the best
         is_best = _val_prec3 > best_prec3
         best_prec3 = max(_val_prec3, best_prec3)
 
         if ith_epoch % args.save_freq == 0 :
-            save_checkpoint({
+            _save_checkpoint({
                 'epoch': ith_epoch + 1,
                 'model_name': args.model,
                 'model': model,
                 'best_prec3': best_prec3,
                 'optimizer': optimizer,
-                'train_losses': train_losses,
-                'val_losses' : val_losses,
-                'val_prec1' : val_prec1,
-                'val_prec3' : val_prec3,
-                'train_prec1' : train_prec1,
-                'train_prec3' : train_prec3
             },  args.path , args.model, args.lr,args.depth,args.batchSize,
                 args.scrop,args.lr_decay,args.gpus,args.optimizer,is_best)
         elif is_best:
             print('=====> setting new best precision@3 : {}'.format(best_prec3))
-            save_checkpoint({
+            _save_checkpoint({
                 'epoch': ith_epoch + 1,
                 'model_name': args.model,
                 'model': model,
                 'best_prec3' : best_prec3,
                 'optimizer': optimizer,
-                'train_losses': train_losses,  
-                'val_losses': val_losses,
-                'val_prec1': val_prec1,
-                'val_prec3': val_prec3,
-                'train_prec1' : train_prec1,
-                'train_prec3' : train_prec3,
             },  args.path ,args.model,args.lr,args.depth,args.batchSize,
                 args.scrop,args.lr_decay,args.gpus,args.optimizer,is_best)
 
         for name,param in model.named_parameters():
             writer.add_histogram(name,param.clone().cpu().data.numpy(),ith_epoch)
 
-    stats.save_stats(args.epochs,train_losses,val_losses,train_prec1,train_prec3,val_prec1,val_prec3)
     writer.close()
