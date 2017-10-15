@@ -1,1 +1,6 @@
+__pycache__/
+*.npz
 .DS_Store
+*.pyc
+*/*.pyc
+*/*/*.pyc

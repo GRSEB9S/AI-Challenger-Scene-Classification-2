@@ -322,7 +322,24 @@ resnet50_places365 = nn.Sequential( # Sequential,
 	),
 	nn.BatchNorm2d(2048),
 	nn.ReLU(),
-    nn.AdaptiveAvgPool2d(1),
-	Lambda(lambda x: x.view(x.size(0),-1)), # View,
+	#nn.AvgPool2d((7, 7),(1, 1)),
+        #nn.AdaptiveAvgPool2d(1),
+	#Lambda(lambda x: x.view(x.size(0),-1)), # View,
+        nn.Sequential( # GWAP
+                nn.Sequential(
+                        LambdaMap(lambda x: x,
+                		nn.Sequential(
+					nn.Conv2d(2048,1,(1, 1),(1, 1),(0, 0),1,1,bias=True),
+                                        Lambda(lambda x: x.view(x.size(0),-1,1,1)),
+					nn.Sigmoid(),
+					nn.Softmax2d(),
+                                        Lambda(lambda x: x.view(x.size(0),1,10,10)),
+				),
+				Lambda(lambda x: x), # Identity
+			),
+			LambdaReduce(lambda x,y: x*y), # CMulTable
+                ),
+		Lambda(lambda x: x.sum(3).sum(2)),
+        ),
 	nn.Sequential(Lambda(lambda x: x.view(1,-1) if 1==len(x.size()) else x ),nn.Linear(2048,80)), # Linear,
 )
