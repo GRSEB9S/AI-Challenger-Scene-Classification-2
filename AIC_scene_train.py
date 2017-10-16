@@ -69,6 +69,7 @@ def train(train_Loader,model,criterion,optimizer,ith_epoch):
     prec1 = Meter()
     prec3 = Meter()
 
+    super_label = list()
     model.train()
     end = time.time()
     for ith_batch, data in enumerate(train_Loader):
@@ -85,10 +86,14 @@ def train(train_Loader,model,criterion,optimizer,ith_epoch):
         loss = criterion(output, label_var) # average loss within a mini-batch
 
         # measure accuracy and record loss
-        _prec1,_prec3 = accuracy(output.data,label,False,topk=(0,2))
+        res, cls1, cls3 = accuracy(output.data,label,False,topk=(0,2))
         losses.update(loss.data[0])
-        prec1.update(_prec1)
-        prec3.update(_prec3)
+        prec1.update(res[0])
+        prec3.update(res[1])
+
+        for i in range(args.batchSize):
+            if cls3[i] != 1:
+                super_label.append(data['idx'][i])
 
         # Backward pass
         optimizer.zero_grad()
@@ -185,14 +190,13 @@ def accuracy(output,label,val=False,topk=(0,)):
         correct_k = float(correct[:,k].sum()) / float(len(label))
         res.append(correct_k)
 
-    if val:
-        cls1, cls3 = list(), list()
-        for i in range(len(label)):
-           cls1.append(correct[i,0])
-           cls3.append(correct[i,2])
-        return res, cls1, cls3
+    cls1, cls3 = list(), list()
+    for i in range(len(label)):
+       cls1.append(correct[i,0])
+       cls3.append(correct[i,2])
+    return res, cls1, cls3
 
-    return res
+    return res, cls1, cls3
 
 if __name__ == '__main__':
 
@@ -246,9 +250,15 @@ if __name__ == '__main__':
             AIC_scene_data.Scale(crop_dict[args.scrop]),
             AIC_scene_data.TenCrop(args.scrop),
             AIC_scene_data.ToTensor(eval=True),
-            AIC_scene_data.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225],
-                                     eval=True) # ImageNet # return list per image
+            AIC_scene_data.Normalize(mean=[0.4956, 0.4791, 0.4486],
+                                     std=[0.2822, 0.2779, 0.2905],  # 3 x 224 x 224
+                                     eval=True)  # ImageNet # return list per image
+            # AIC_scene_data.Normalize(mean=[0.4956, 0.4791, 0.4487],
+            #                          std=[0.2848, 0.2805, 0.2929],
+            #                          eval=True) # 3 x 336 x 336
+            # AIC_scene_data.Normalize(mean=[0.4956, 0.4791, 0.4487],
+            #                          std=[0.2861, 0.2818, 0.2941],
+            #                          eval=True) # 3 x 448 x 448
         ]))
     print(val_dataset.__len__())
     train_Loader,val_Loader = _make_dataloaders(train_dataset,val_dataset)
