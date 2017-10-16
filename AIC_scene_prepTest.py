@@ -36,9 +36,15 @@ if __name__ == "__main__":
             AIC_scene_data.Scale(crop_dict[args.scrop]),
             AIC_scene_data.TenCrop(args.scrop),
             AIC_scene_data.ToTensor(eval=True),
-            AIC_scene_data.Normalize(mean=[0.4951, 0.476, 0.4457],
-                                     std=[0.2832, 0.2788, 0.2907],
-				                     eval=True)
+            AIC_scene_data.Normalize(mean=[0.4956, 0.4771, 0.4462],
+                                     std=[0.2823, 0.2778, 0.29],
+				                     eval=True) # 3 x 224 x 224
+            # AIC_scene_data.Normalize(mean=[0.4956, 0.4772, 0.4462],
+            #                          std=[0.2849, 0.2804, 0.2924],
+            #                          eval=True) # 3 x 336 x 336
+            # AIC_scene_data.Normalize(mean=[0.4956, 0.4771, 0.4462],
+            #                          std=[0.2862, 0.2818, 0.2937],
+            #                          eval=True) # 3 x 448 x 448
         ]))
 
     testA_Loader = DataLoader(AIC_scene_testA,batch_size=args.batchsize,shuffle=False,num_workers=8)
