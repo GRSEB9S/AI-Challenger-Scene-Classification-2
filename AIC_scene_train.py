@@ -1,27 +1,26 @@
-import options
-import shutil
-import time
-import AIC_scene_data
-import Plot
+import LSR
 import math
-import os
-
-import os
+import time
+import torch
+import shutil
+import options
+import torch.cuda
+import self_models
+import numpy as np
+import utility_Func
+import AIC_scene_data
+import torch.nn as nn
 import torch.utils.data
 import torch.optim as optim
-import torch
-import self_models
-import torch.nn as nn
-import torch.cuda
+import torch.distributed as distributed
 
 from Meter import Meter
+from torch.nn import DataParallel
+from torch.autograd import Variable
+from AIC_scene_data import AIC_scene
+from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms, utils
-from torch.nn import DataParallel
-from AIC_scene_data import AIC_scene
-from torch.autograd import Variable
-from tensorboardX import SummaryWriter
-from labelSmooth_Loss import LSR
 
 def _make_dataloaders(train_set, val_set):
 
@@ -69,7 +68,6 @@ def train(train_Loader,model,criterion,optimizer,ith_epoch):
     prec1 = Meter()
     prec3 = Meter()
 
-    super_label = list()
     model.train()
     end = time.time()
     for ith_batch, data in enumerate(train_Loader):
@@ -86,14 +84,10 @@ def train(train_Loader,model,criterion,optimizer,ith_epoch):
         loss = criterion(output, label_var) # average loss within a mini-batch
 
         # measure accuracy and record loss
-        res, cls1, cls3 = accuracy(output.data,label,False,topk=(0,2))
+        res, cls1, cls3 = utility_Func.accuracy(output.data,label,False,topk=(0,2))
         losses.update(loss.data[0])
         prec1.update(res[0])
         prec3.update(res[1])
-
-        for i in range(args.batchSize):
-            if cls3[i] != 1:
-                super_label.append(data['idx'][i])
 
         # Backward pass
         optimizer.zero_grad()
@@ -121,10 +115,7 @@ def validate(val_Loader,model,criterion,ith_epoch):
     losses = Meter()  # record average losses across all mini-batches within an epoch
     top1 = Meter()  # record average top1 precision across all mini-batches within an epoch
     top3 = Meter()  # record average top3 precision
-    cls_top1,cls_top3 = dict(),dict()
-    for i in range(80):
-        cls_top1[i] = Meter()
-        cls_top3[i] = Meter()
+    cls_top1,cls_top3 = {i:Meter() for i in range(80)},{i:Meter() for i in range(80)}
 
     model.eval()
     end = time.time()
@@ -148,7 +139,7 @@ def validate(val_Loader,model,criterion,ith_epoch):
         loss = criterion(final_output_var, Variable(data['label'].cuda()))  # average loss within a mini-batch
 
         # measure accuracy and record loss
-        res, cls1, cls3 = accuracy(final_output,data['label'].cuda(),True,topk=(0, 2))
+        res, cls1, cls3 = utility_Func.accuracy(final_output,data['label'].cuda(),True,topk=(0, 2))
         prec1,prec3 = res[0],res[1]
         losses.update(loss.data[0])
         top1.update(prec1)
@@ -169,34 +160,6 @@ def validate(val_Loader,model,criterion,ith_epoch):
                   'Averaged Batch-Prec@3 : %s \n' % top3_avg)
 
     return losses.avg(),top1.avg(),top3.avg(),cls_top1,cls_top3
-
-def accuracy(output,label,val=False,topk=(0,)):
-
-    # compute accuracy for precision@k for the specified k and each class
-    # output : BatchSize x n_classes
-
-    maxk = max(topk)
-    _, pred_index = torch.topk(output,maxk+1,dim=1,largest=True,sorted=True) # descending order
-    correct = pred_index.eq(label.view(len(label),-1).expand_as(pred_index))
-    for i in range(len(label)):
-        for j in range(3):
-            if correct[i,j] == 1 :
-                for k in range(j+1,3):
-                    correct[i,k] = 1
-                break
-
-    res=[]
-    for k in topk:
-        correct_k = float(correct[:,k].sum()) / float(len(label))
-        res.append(correct_k)
-
-    cls1, cls3 = list(), list()
-    for i in range(len(label)):
-       cls1.append(correct[i,0])
-       cls3.append(correct[i,2])
-    return res, cls1, cls3
-
-    return res, cls1, cls3
 
 if __name__ == '__main__':
 
@@ -234,13 +197,16 @@ if __name__ == '__main__':
             AIC_scene_data.RandomSizedCrop(args.scrop),
             # AIC_scene_data.supervised_Crop((args.scrop,args.scrop),os.path.join(args.path,"AIC_train_scrop224")),
             AIC_scene_data.RandomHorizontalFlip(),
+            AIC_scene_data.ColorJitter(args.brightness,args.contrast,args.saturation,args.hue),
             AIC_scene_data.ToTensor(),  # pixel values range from 0.0 to 1.0
+            AIC_scene_data.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225]) # ImageNet
             # AIC_scene_data.Normalize(mean=[0.4951, 0.476, 0.4457],
             #                          std=[0.2832, 0.2788, 0.2907]) # 3 x 224 x 224
             # AIC_scene_data.Normalize(mean=[0.4952, 0.476 0.4457],
             #                          std=[0.2858, 0.2814, 0.2931]) # 3 x 336 x 336
             # AIC_scene_data.Normalize(mean=[0.4927, 0.4735, 0.4435],
-            #                          std=[0.2884, 0.2839, 0.2952])
+            #                          std=[0.2884, 0.2839, 0.2952]) # 3 x 448 x 448
         ]))
     print(train_dataset.__len__())
     val_dataset = AIC_scene(
@@ -248,11 +214,15 @@ if __name__ == '__main__':
         path = args.path,
         Transform=transforms.Compose([
             AIC_scene_data.Scale(crop_dict[args.scrop]),
+            AIC_scene_data.RandomHorizontalFlip(),
+            AIC_scene_data.ColorJitter(args.brightness,args.contrast,args.saturation,args.hue),
             AIC_scene_data.TenCrop(args.scrop),
             AIC_scene_data.ToTensor(eval=True),
-            AIC_scene_data.Normalize(mean=[0.4956, 0.4791, 0.4486],
-                                     std=[0.2822, 0.2779, 0.2905],  # 3 x 224 x 224
-                                     eval=True)  # ImageNet # return list per image
+            AIC_scene_data.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225]) # ImageNet
+            # AIC_scene_data.Normalize(mean=[0.4956, 0.4791, 0.4486],
+            #                          std=[0.2822, 0.2779, 0.2905],  # 3 x 224 x 224
+            #                          eval=True)  # ImageNet # return list per image
             # AIC_scene_data.Normalize(mean=[0.4956, 0.4791, 0.4487],
             #                          std=[0.2848, 0.2805, 0.2929],
             #                          eval=True) # 3 x 336 x 336
@@ -358,11 +328,10 @@ if __name__ == '__main__':
                 model = self_models.DenseNetVOC()
 
         if args.gpus == 1:
-
             model.cuda()
-
+        elif args.distributed:
+            distributed.init_process_group(backend="gloo",world_size=5,)
         else:
-
             model = DataParallel(model, device_ids=list(range(args.gpus)))  # output stored in gpus[0]
             model = model.cuda()
 
@@ -408,7 +377,8 @@ if __name__ == '__main__':
               .format(args.resume, checkpoint['epoch']))
 
     # define loss function and optimizer
-    criterion = nn.LSR().cuda()
+    # criterion = nn.CrossEntropyLoss().cuda()
+    criterion = LSR().cuda()
 
     # ---------------------------------------------------
     #                                               train
@@ -417,22 +387,16 @@ if __name__ == '__main__':
     if args.resume is None:
         best_prec3 = 0
 
-
     for ith_epoch in range(args.start_epoch,args.epochs):
 
         # _set_lr(optimizer, ith_epoch, args.epochs)
-        AIC_scene_data.label_shuffle(os.path.join(args.path,"ai_challenger_scene_train_20170904","train_label.txt"),
-                                     os.path.join(args.path,"ai_challenger_scene_train_20170904","shuffle_label.txt"),
-                                     train_dataset,
-                                     part="train",path=args.path,
-                                     sub_path="ai_challenger_scene_train_20170904",
-                                     img_path="scene_train_images_20170904")
 
         if args.optimizer == 'Adam':
             pass
         else:
             _set_lr(optimizer, ith_epoch, args.epochs, args.cosine)
 
+        priorDis = np.load("priorDis.npy")
         train_loss, _train_prec1, _train_prec3 = train(train_Loader,model,criterion,optimizer,ith_epoch)
         writer.add_scalar('train_loss', train_loss, ith_epoch)
         writer.add_scalar('train_prec1', _train_prec1, ith_epoch)
