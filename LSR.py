@@ -1,19 +1,21 @@
 import torch
-import torch.nn as nn
 import numpy as np
-
+from torch.nn import Module
+import torch.nn.functional as F
 from torch.autograd import Variable
 
-class LSR(nn.Module):
+class LSR(Module):
     def __init__(self):
+        super(LSR,self).__init__()
         self.priorDis = np.load("priorDis.npy")
 
     def forward(self,input,target):
+
         # input target are Variable(batchSize,80),(batchSize)
-        label = Variable(torch.Tensor(len(target),80)) #(batchSize,80)
-        batch_loss = Variable(torch.Tensor(len(target)))
+        label = Variable(torch.Tensor(len(target),80).cuda()) #(batchSize,80)
         for i in range(len(target)):
-            label[i] = torch.from_numpy(np.array(self.priorDis[target.data[i]]))
-            batch_loss[i] = torch.mul(torch.sum(torch.mul(torch.log(input[i]),label[i])),-1)
+            label[i] = torch.from_numpy(np.array(self.priorDis[target[i]]))
+
+        batch_loss = torch.mul(torch.sum(torch.mul(F.log_softmax(input),label),1),-1)
 
         return torch.mean(batch_loss)

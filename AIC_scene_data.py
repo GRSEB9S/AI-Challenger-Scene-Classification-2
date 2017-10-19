@@ -11,6 +11,7 @@ import numpy as np
 from PIL import Image
 from PIL import ImageEnhance
 from torch.utils.data import Dataset
+from torchvision.transforms import  Compose
 
 def pil_loader(path):
     # open path as file to avoid ResourceWarning (https://github.com/python-pillow/Pillow/issues/835)
@@ -431,6 +432,23 @@ class Normalize(object):
                 t.sub_(m).div_(s)
             return {'image':sample['image'],'label':sample['label'],'idx':sample['idx']}
 
+class pcaJittering(object):
+    """
+    implements fancy PCA Jittering of AlexNet
+    """
+    def __init__(self,eig):
+        self.eigValue = eig[0]
+        self.eigVector = eig[1]
+        self.random = self.genRandom()
+
+    def genRandom(self):
+        return np.array([random.gauss(0,0.1) for i in range(3)])
+
+    def __call__(self,sample):
+        addQuantity = np.dot(self.eigVector,self.random * self.eigValue)
+        addImg = np.array(sample['image']) + addQuantity.reshape((1,1,3))
+        return {'image':Image.fromarray(addImg,mode='RGB'),'label':sample['label'],'idx':sample['idx']}
+
 class Lambda(object):
     """Apply a user-defined lambda as a transform.
     Args:
@@ -572,7 +590,7 @@ class ColorJitter(object):
             transforms.append(Lambda(lambda img: adjust_hue(img, hue_factor)))
 
         np.random.shuffle(transforms)
-        transform = transforms.Compose(transforms)
+        transform = Compose(transforms)
 
         return transform
 

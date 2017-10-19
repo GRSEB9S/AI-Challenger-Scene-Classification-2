@@ -1,4 +1,3 @@
-import LSR
 import math
 import time
 import torch
@@ -8,12 +7,14 @@ import torch.cuda
 import self_models
 import numpy as np
 import utility_Func
+import pcaJittering
 import AIC_scene_data
 import torch.nn as nn
 import torch.utils.data
 import torch.optim as optim
 import torch.distributed as distributed
 
+from LSR import LSR
 from Meter import Meter
 from torch.nn import DataParallel
 from torch.autograd import Variable
@@ -79,12 +80,11 @@ def train(train_Loader,model,criterion,optimizer,ith_epoch):
 
         # Forward pass
         input_var = Variable(input)
-        label_var = Variable(label)
         output = model(input_var)
-        loss = criterion(output, label_var) # average loss within a mini-batch
+        loss = criterion(output,label) # average loss within a mini-batch
 
         # measure accuracy and record loss
-        res, cls1, cls3 = utility_Func.accuracy(output.data,label,False,topk=(0,2))
+        res, cls1, cls3 = utility_Func.accuracy(output.data,label,topk=(0,2))
         losses.update(loss.data[0])
         prec1.update(res[0])
         prec3.update(res[1])
@@ -195,18 +195,13 @@ if __name__ == '__main__':
         Transform=transforms.Compose([
             # AIC_scene_data.RandomScaleCrop(),
             AIC_scene_data.RandomSizedCrop(args.scrop),
+            AIC_scene_data.pcaJittering(pcaJittering.getEig()),
             # AIC_scene_data.supervised_Crop((args.scrop,args.scrop),os.path.join(args.path,"AIC_train_scrop224")),
             AIC_scene_data.RandomHorizontalFlip(),
             AIC_scene_data.ColorJitter(args.brightness,args.contrast,args.saturation,args.hue),
             AIC_scene_data.ToTensor(),  # pixel values range from 0.0 to 1.0
             AIC_scene_data.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225]) # ImageNet
-            # AIC_scene_data.Normalize(mean=[0.4951, 0.476, 0.4457],
-            #                          std=[0.2832, 0.2788, 0.2907]) # 3 x 224 x 224
-            # AIC_scene_data.Normalize(mean=[0.4952, 0.476 0.4457],
-            #                          std=[0.2858, 0.2814, 0.2931]) # 3 x 336 x 336
-            # AIC_scene_data.Normalize(mean=[0.4927, 0.4735, 0.4435],
-            #                          std=[0.2884, 0.2839, 0.2952]) # 3 x 448 x 448
         ]))
     print(train_dataset.__len__())
     val_dataset = AIC_scene(
