@@ -6,19 +6,19 @@
 # need to retrain models that take different scale size as input size
 # after generating heatmap, use scropped image region to train other models.
 
-import torch
-import sys
-import numpy as np
-import AIC_scene_data
-import cv2
 import os
+import cv2
+import torch
+import options
+import numpy as np
 import collections
-
+import AIC_scene_data
+from torch.nn import DataParallel
 from torchvision import transforms
-from AIC_scene_data import AIC_scene
-from torch.utils.data import DataLoader
 from torch.autograd import Variable
 from torch.nn import functional as F
+from AIC_scene_data import AIC_scene
+from torch.utils.data import DataLoader
 
 
 def hook_feature(module,input,output):
@@ -36,24 +36,21 @@ def return_CAM(conv_feature,weight_softmax,cls_idx):
     cam = cam - np.min(cam)
     cam_img = cam / np.max(cam)
     cam_img = np.uint8(255 * cam_img)
-    output_cam = cv2.resize(cam_img, size_upsample[str(scrop)])
+    output_cam = cv2.resize(cam_img, size_upsample[str(args.scrop)])
 
     return output_cam
 
 if __name__ == "__main__":
 
-    if len(sys.argv) != 6:
-        print("please specify the right best model path and last conv name:\n")
-        print("example : \t/data/chaoyang/scene_Classification/ResNet50_best_lr0.1_depth32_bs256.pth.tar\n")
-        print("\t  last conv layer name scropSize saved_data path crop_nums per image")
-        exit()
+    args = options.parse_args()
 
-    checkpoint = torch.load(sys.argv[1])
-    print(checkpoint['best_prec3'])
+    checkpoint = torch.load(os.path.join(args.path,args.best_model))
+    print("=====> best_prec3 is : {}".format(checkpoint['best_prec3']))
+
     _state_dict = checkpoint['model'].state_dict()
     state_dict = collections.OrderedDict()
-    for i in range(len(_state_dict.keys())):
-        old_key = list(_state_dict.keys())[i]
+    for ith_batch in range(len(_state_dict.keys())):
+        old_key = list(_state_dict.keys())[ith_batch]
         new_key = old_key.replace("module.", "")
         if old_key in ['module.12.1.weight','module.12.1.bias']:
             new_key = old_key.replace("module.12","13")
@@ -61,48 +58,44 @@ if __name__ == "__main__":
     import resnet50_places365_scratch
     model = resnet50_places365_scratch.resnet50_places365
     model.load_state_dict(state_dict)
-    last_conv = sys.argv[2]
-    scrop = int(sys.argv[3])
     size = {'224':256,'336':384,'448':512}
-    data_path = sys.argv[4]
-    crop_nums = int(sys.argv[5])
     if checkpoint['model_name'] in ['ResNet50','ResNet152']:
-        assert last_conv == '7'
+        assert args.last_conv == '7'
     elif checkpoint['model_name'] == "ChampResNet152":
-        assert last_conv == '13'
+        assert args.last_conv == '13'
     else:
         pass
 
     # hook last conv layer for feature map
     # note it's a building block module, not the last conv layer in the network
     # for scrop 224
-    model._modules.get(last_conv).register_forward_hook(hook_feature)
+    model._modules.get(args.last_conv).register_forward_hook(hook_feature)
 
     params = list(model.parameters())
     weight_softmax = np.squeeze(params[-2].data.cpu().numpy())  # 80 * 2048
     weight_softmax = torch.from_numpy(weight_softmax).cuda()
 
-    model.eval()
-    model = model.cuda(device_id=0)
+    model = DataParallel(model,device_ids=list(range(args.gpus)))
+    model = model.cuda()
 
-    train_dataset = AIC_scene(
+    train_data = AIC_scene(
         part='train',
-        path='/data/chaoyang/scene_Classification',
+        path=args.path,
         Transform=transforms.Compose([
-            AIC_scene_data.Scale((scrop,scrop)),
-            AIC_scene_data.CenterCrop(scrop),
+            AIC_scene_data.Scale((args.scrop,args.scrop)),
+            AIC_scene_data.CenterCrop(args.scrop),
             AIC_scene_data.ToTensor(),
             AIC_scene_data.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225])
+                                 std=[0.229, 0.224, 0.225]) # ImageNet
         ]))
-    train_Loader = DataLoader(train_dataset,batch_size=1,shuffle=False,num_workers=8)
+    train_loader = DataLoader(train_data,batch_size=args.batchSize,shuffle=False,num_workers=8)
 
     wrong = 0 # record number of wrong prediction images
-    # crop_probs = list()
     index = list()
     coordinates = list()
-    for i,data in enumerate(train_Loader):
-        print(i/len(train_Loader))
+
+    for ith_batch, data in enumerate(train_loader):
+        print(ith_batch / len(train_loader))
         input,label = data['image'].cuda(),data['label'].numpy() # torch.cuda.LongTensor size 1
         input_Var = Variable(input)
 
@@ -118,13 +111,13 @@ if __name__ == "__main__":
             if idx[j] == label :
                 prob_conf = list()
                 CAM = return_CAM(feature_map[0],weight_softmax,idx[j])
-                for l in range(np.power(size[str(scrop)] - scrop + 1, 2)):
-                    r = l // (size[str(scrop)]-scrop+1)
-                    c = l % (size[str(scrop)]-scrop+1)
-                    prob_conf.append(np.sum(CAM[r:r+scrop,c:c+scrop]))
-                coordinate = np.argsort(prob_conf)[-crop_nums:] # probs is an ascending order, returning array
+                for l in range(np.power(size[str(args.scrop)] - args.scrop + 1, 2)):
+                    r = l // (size[str(args.scrop)]-args.scrop+1)
+                    c = l % (size[str(args.scrop)]-args.scrop+1)
+                    prob_conf.append(np.sum(CAM[r:r+args.scrop,c:c+args.scrop]))
+                coordinate = np.argsort(prob_conf)[-args.crop_nums:] # probs is an ascending order, returning array
                 # crop_probs.append(CAM)
-                index.append(i)
+                index.append(ith_batch)
                 coordinates.append(coordinate)
                 correct = True
                 break
@@ -135,7 +128,7 @@ if __name__ == "__main__":
         print(wrong)
 
     print(wrong)
-    np.savez(os.path.join(data_path,"crop_probs.npz"),index=index,coordinates=coordinates)
+    np.savez(os.path.join(args.path,"crop_probs.npz"),index=index,coordinates=coordinates)
 
 
 

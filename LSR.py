@@ -11,7 +11,8 @@ class LSR(Module):
 
     def forward(self,input,target):
 
-        # input target are Variable(batchSize,80),(batchSize)
+        # input is Variable(batchSize,80)
+        # target is torch.cuda.Tensor() of shape (batchSize)
         label = Variable(torch.Tensor(len(target),80).cuda()) #(batchSize,80)
         for i in range(len(target)):
             label[i] = torch.from_numpy(np.array(self.priorDis[target[i]]))

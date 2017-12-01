@@ -1,3 +1,4 @@
+import os
 import torch
 import random
 import itertools
@@ -84,9 +85,9 @@ def priorLabelDis(epsilon,t):
         priorDis.append(u)
     np.save("priorDis.npy",priorDis)
 
-def supervised_label_shuffle(train,shuffle,low):
+def supervised_label_shuffle(train,shuffle,low,self=None,args=None):
 
-    with open(train) as f:
+    with open(train,'r') as f:
         lines = f.readlines()
         cls_id = np.zeros(len(lines), dtype=np.int8)
         cls_num, cls_idx, final = list(), list(), list()
@@ -108,9 +109,71 @@ def supervised_label_shuffle(train,shuffle,low):
                 final.extend(cls_idx[i])
         random.shuffle(final)
 
-    shuff_lines = list()
-    with open(shuffle, 'w') as file:
+    shuff_lines= list()
+    with open(shuffle,'w') as f:
         for i in range(len(final)):
             shuff_lines.append(lines[final[i]])
-        file.writelines(shuff_lines)
+        f.writelines(shuff_lines)
+
+        """
+        add_lines = list()
+        for i in low:
+            random.shuffle(idx)
+            random_idx = [k.item() for k in np.mod(idx, cls_num[i])]
+            this = cls_idx[i]
+            for j in range(maximum):
+                add_lines.append(lines[this[random_idx[j]]])
+        for i in low:
+            this = cls_idx[i]
+            for j in this:
+                del lines[j]
+
+        random.shuffle(add_lines)
+        lines.extend(add_lines)
+
+        with open(shuffle, 'w') as f:
+            f.writelines(lines)
+        """
+    if self != None:
+        with open(self.read) as f:
+            lines = f.readlines()
+            for i in range(len(lines)):
+                img_name, label_index = lines[i].split(' ')
+                self.image.append(os.path.join(args.path,"ai_challenger_scene_train_20170904","scene_train_images_20170904", img_name))
+                self.label.append(int(label_index))
+
+def label_shuffle(train,shuffle,self=None,args=None):
+
+    with open(train,'r') as f:
+        lines = f.readlines()
+        cls_id = np.zeros(len(lines), dtype=np.int8)
+        cls_num, cls_idx, final = list(), list(), list()
+        for i in range(len(lines)):
+            cls_id[i] = lines[i].split(" ")[1]
+        for i in range(80):
+            cls_num.append(len(np.where(cls_id == i)[0]))
+            cls_idx.append(list(np.argwhere(cls_id == i)[:, 0]))
+        maximum, minimum = max(cls_num), min(cls_num)
+        idx = list(range(maximum))
+        for i in range(80):
+            random.shuffle(idx)
+            random_idx = [k.item() for k in np.mod(idx, cls_num[i])]
+            this = cls_idx[i]
+            for j in range(maximum):
+                final.append(this[random_idx[j]])
+        random.shuffle(final)
+
+    shuff_lines= list()
+    with open(shuffle,'w') as f:
+        for i in range(len(final)):
+            shuff_lines.append(lines[final[i]])
+        f.writelines(shuff_lines)
+
+    if self != None:
+        with open(self.read) as f:
+            lines = f.readlines()
+            for i in range(len(lines)):
+                img_name, label_index = lines[i].split(' ')
+                self.image.append(os.path.join(args.path,"ai_challenger_scene_train_20170904","scene_train_images_20170904", img_name))
+                self.label.append(int(label_index))
 

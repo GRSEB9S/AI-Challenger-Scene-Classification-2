@@ -324,5 +324,14 @@ resnet50_places365 = nn.Sequential( # Sequential,
 	nn.ReLU(),
     nn.AdaptiveAvgPool2d(1),
 	Lambda(lambda x: x.view(x.size(0),-1)), # View,
+self.classifier = nn.Sequential(
+            nn.Linear(512 * 7 * 7, 4096),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(4096, 4096),
+            nn.ReLU(True),
+            nn.Dropout(),
+            nn.Linear(4096, num_classes),
+        )
 	nn.Sequential(Lambda(lambda x: x.view(1,-1) if 1==len(x.size()) else x ),nn.Linear(2048,80)), # Linear,
 )

@@ -1,3 +1,5 @@
+# -*- coding:utf-8 -*-
+import os
 import math
 import time
 import torch
@@ -10,7 +12,6 @@ import utility_Func
 import pcaJittering
 import AIC_scene_data
 import torch.nn as nn
-import torch.utils.data
 import torch.optim as optim
 import torch.distributed as distributed
 
@@ -22,17 +23,19 @@ from AIC_scene_data import AIC_scene
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from torchvision import transforms, utils
+from torch.nn.parallel import DistributedDataParallel
 
 def _make_dataloaders(train_set, val_set):
 
     train_Loader = DataLoader(train_set,
                               batch_size=args.batchSize,
-                              shuffle=True,
+                              shuffle=(train_sampler is None),
                               num_workers=args.workers,
-                              pin_memory=True)
+                              pin_memory=True,
+                              sampler=train_sampler)
 
     val_Loader = DataLoader(val_set,
-                            batch_size=int(args.batchSize/8),
+                            batch_size=int(args.batchSize/4),
                             shuffle=False,
                             num_workers=args.workers,
                             pin_memory=True)
@@ -48,18 +51,17 @@ def _set_lr(optimizer, ith_epoch, epochs, cosine=False):
         learning_rate = args.lr * (args.stepSize ** (ith_epoch // args.lr_decay))
     for param_group in optimizer.param_groups:
         param_group['lr'] = learning_rate
-
     print('=====> setting learning_rate to : {},{}/{}'.format(learning_rate, ith_epoch, epochs))
 
-def _save_checkpoint(state,path,model_name,lr,depth,batchsize,scale,lrdecay,gpus,optimizer,is_best):
+def _save_checkpoint(state,args,is_best):
 
-    checkpoint_path = "{}/{}_{}_lr{}_depth{}_bs{}_scale{}_lrdecay{}_gpus{}_optimizer{}.pth.tar".\
-        format(path,model_name,state['epoch']-1,lr,depth,batchsize,scale,lrdecay,gpus,optimizer)
+    checkpoint_path = "{}/{}_{}_lr{}_depth{}_bs{}_scale{}_lrdecay{}_gpus{}_optimizer{}_LSR{}.pth.tar".\
+        format(args.path,args.model,state['epoch']-1,args.lr,args.depth,args.batchSize,args.scrop,args.lr_decay,args.gpus,args.optimizer,args.t)
 
     torch.save(state,checkpoint_path)
     if is_best:
-        shutil.copyfile(checkpoint_path,"{}/{}_best_lr{}_depth{}_bs{}_scale{}_lrdecay{}_gpus{}_optimizer{}.pth.tar".
-                        format(path,model_name,lr,depth,batchsize,scale,lrdecay,gpus,optimizer))
+        shutil.copyfile(checkpoint_path,"{}/{}_best_lr{}_depth{}_bs{}_scale{}_lrdecay{}_gpus{}_optimizer{}_LSR{}.pth.tar".
+                        format(args.path,args.model,args.lr,args.depth,args.batchSize,args.scrop,args.lr_decay,args.gpus,args.optimizer,args.t))
 
 def train(train_Loader,model,criterion,optimizer,ith_epoch):
 
@@ -79,7 +81,7 @@ def train(train_Loader,model,criterion,optimizer,ith_epoch):
         end = time.time()
 
         # Forward pass
-        input_var = Variable(input)
+        input_var,label_var = Variable(input), Variable(label)
         output = model(input_var)
         loss = criterion(output,label) # average loss within a mini-batch
 
@@ -123,28 +125,27 @@ def validate(val_Loader,model,criterion,ith_epoch):
 
         # Forward pass
         tmp = list()
-        final_output = torch.zeros(args.batchSize // 8, 80).cuda()
+        final_output = torch.zeros(len(data['label']), 80).cuda()
         for i in range(10):
             input = data['image'][i]
             input = input.cuda()
             input_var = Variable(input)
-            output = model(input_var)  # args.batchSize //8  x 80
+            output = model(input_var)  # args.batchSize //32  x 80
             tmp.append(output.data)
 
-        for i in range(args.batchSize//8):
+        for i in range(len(data['label'])):
             for j in range(10):
                 final_output[i,:]+=tmp[j][i,:]
             final_output[i,:].div_(10.0)
         final_output_var = Variable(final_output)
-        loss = criterion(final_output_var, Variable(data['label'].cuda()))  # average loss within a mini-batch
+        loss = criterion(final_output_var,data['label'].cuda())  # average loss within a mini-batch
 
         # measure accuracy and record loss
-        res, cls1, cls3 = utility_Func.accuracy(final_output,data['label'].cuda(),True,topk=(0, 2))
-        prec1,prec3 = res[0],res[1]
+        res, cls1, cls3 = utility_Func.accuracy(final_output,data['label'].cuda(),topk=(0, 2))
         losses.update(loss.data[0])
-        top1.update(prec1)
-        top3.update(prec3)
-        for i in range(args.batchSize//8):
+        top1.update(res[0])
+        top3.update(res[1])
+        for i in range(len(data['label'])):
             cls_top1[data['label'][i]].update(cls1[i])
             cls_top3[data['label'][i]].update(cls3[i])
 
@@ -173,7 +174,9 @@ if __name__ == '__main__':
     # ResNet50:resnet50_places365_scratch.py, trained on Places365_standard, unvalidated
     # ResNet152:resnet152_places365_scratch.py, trained on Places365_standard, unvalidated
 
-    pre_models = ['DenseNet', 'ResNext1101', 'ResNext2101', 'ResNext50', 'ResNet50', 'ResNet152','DenseNet161','ChampResNet152','ResNet50AIC80','ResNet50GWAP','ResNet50MeanMax']
+    pre_models = ['DenseNet', 'ResNext1101', 'ResNext2101', 'ResNext50', 'ResNet50',
+                  'ResNet152','DenseNet161','ChampResNet152','ResNet50AIC80','ResNet50GWAP',
+                  'ResNet50MeanMax','ResNet18','wholeResNet50']
     if args.model not in pre_models and args.pretrained == True: raise ValueError('please specify the right pre_trained model name!')
     models_dict = {'DenseNet' : 'densenet_cosine_264_k48',
                    'ResNext1101' : 'resnext_101_32x4d',
@@ -181,64 +184,14 @@ if __name__ == '__main__':
                    'ResNext50' : 'resnext_50_32x4d',
                    'ResNet50' : 'resnet50_places365_scratch',
                    'ResNet152' : 'resnet152_places365_scratch',
-                   'ChampResNet152' : 'Places2_365_CNN'}
+                   'ChampResNet152' : 'Places2_365_CNN',
+                   'ResNet18' : 'whole_resnet18_places365',
+                   'wholeResNet50' : "whole_resnet50_places365"}
     pre_model_path = args.pre_model_path
-    crop_dict = {224:256,320:395}
-    # ---------------------------------------------------
-    #                                        data loading
-    # ---------------------------------------------------
-
-
-    train_dataset = AIC_scene(
-        part="train",
-        path = args.path,
-        Transform=transforms.Compose([
-            # AIC_scene_data.RandomScaleCrop(),
-            AIC_scene_data.RandomSizedCrop(args.scrop),
-            AIC_scene_data.pcaJittering(pcaJittering.getEig()),
-            # AIC_scene_data.supervised_Crop((args.scrop,args.scrop),os.path.join(args.path,"AIC_train_scrop224")),
-            AIC_scene_data.RandomHorizontalFlip(),
-            AIC_scene_data.ColorJitter(args.brightness,args.contrast,args.saturation,args.hue),
-            AIC_scene_data.ToTensor(),  # pixel values range from 0.0 to 1.0
-            AIC_scene_data.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225]) # ImageNet
-        ]))
-    print(train_dataset.__len__())
-    val_dataset = AIC_scene(
-        part="val",
-        path = args.path,
-        Transform=transforms.Compose([
-            AIC_scene_data.Scale(crop_dict[args.scrop]),
-            AIC_scene_data.RandomHorizontalFlip(),
-            AIC_scene_data.ColorJitter(args.brightness,args.contrast,args.saturation,args.hue),
-            AIC_scene_data.TenCrop(args.scrop),
-            AIC_scene_data.ToTensor(eval=True),
-            AIC_scene_data.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225]) # ImageNet
-            # AIC_scene_data.Normalize(mean=[0.4956, 0.4791, 0.4486],
-            #                          std=[0.2822, 0.2779, 0.2905],  # 3 x 224 x 224
-            #                          eval=True)  # ImageNet # return list per image
-            # AIC_scene_data.Normalize(mean=[0.4956, 0.4791, 0.4487],
-            #                          std=[0.2848, 0.2805, 0.2929],
-            #                          eval=True) # 3 x 336 x 336
-            # AIC_scene_data.Normalize(mean=[0.4956, 0.4791, 0.4487],
-            #                          std=[0.2861, 0.2818, 0.2941],
-            #                          eval=True) # 3 x 448 x 448
-        ]))
-    print(val_dataset.__len__())
-    train_Loader,val_Loader = _make_dataloaders(train_dataset,val_dataset)
 
     writer = SummaryWriter(
-        log_dir="runs/{}_lr{}_bs{}_depth{}_lrdecay{}_stepSize{}_gpus{}_scale{}_optimizer{}".format(
-            args.model, args.lr, args.batchSize,args.depth,args.lr_decay,args.stepSize,args.gpus,args.scrop,args.optimizer))
-
-    # display only a batch of image without undermining program's speed
-    for i,data in enumerate(train_Loader):
-        batch_img,batch_label = data['image'],data['label']
-        grid = utils.make_grid(batch_img,nrow=16,padding=0,normalize=True)
-        writer.add_image('1stbatch_trainImgs',grid)
-        if i == 0:
-            break
+        log_dir="runs1/{}_lr{}_bs{}_depth{}_lrdecay{}_stepSize{}_gpus{}_scale{}_optimizer{}_LSR{}".format(
+            args.model, args.lr, args.batchSize,args.depth,args.lr_decay,args.stepSize,args.gpus,args.scrop,args.optimizer,args.t))
 
     # ---------------------------------------------------
     # multiple Gpu version loading and distributing model
@@ -264,6 +217,8 @@ if __name__ == '__main__':
             elif args.model == pre_models[4]:
                 import resnet50_places365_scratch
                 model = resnet50_places365_scratch.resnet50_places365
+                # checkpoint = torch.load("{}/{}".format(args.path,"ResNet50_best_lr0.01_depth1_bs288_scale224_lrdecay5_gpus4_optimizerSGD.pth.tar"))
+                # model = checkpoint['model']
             elif args.model == pre_models[5]:
                 import resnet152_places365_scratch
                 model = resnet152_places365_scratch.resnet152_places365
@@ -279,8 +234,16 @@ if __name__ == '__main__':
             elif args.model == pre_models[10]:
                 import resnet50_places365_meanmax
                 model = resnet50_places365_meanmax.resnet50_places365
+            elif args.model == pre_models[11]:
+                model = torch.load("{}{}.pth.tar".format(pre_model_path,models_dict[args.model]))
+                model.fc = torch.nn.Linear(512,80)
+            elif args.model == pre_models[12]:
+                model = torch.load("{}{}.pth.tar".format(pre_model_path,models_dict[args.model]))
+                model.fc = torch.nn.Linear(512,80)
 
-            if args.model == 'pyResNet50':
+            if args.model in ['ResNet18','wholeResNet50']:
+                pass
+            elif args.model == 'pyResNet50':
                 model = torch.load("{}whole_resnet50_places365.pth.tar".format(pre_model_path))
                 model.classifier = nn.Linear(2208,80)
             elif args.model == pre_models[7]:
@@ -300,13 +263,13 @@ if __name__ == '__main__':
                 model_dict.update(pre_state_dict)
                 model.load_state_dict(model_dict) 
             else:
-                pre_state_dict = torch.load("{}{}.pth".format(pre_model_path, models_dict[args.model]))
+                pre_state_dict = torch.load("{}{}.pth".format(pre_model_path,models_dict[args.model]))
                 layers = list(pre_state_dict.keys())
                 pre_state_dict.pop(layers[-1])
                 pre_state_dict.pop(layers[-2])
                 model_dict = model.state_dict()
                 model_dict.update(pre_state_dict)
-                model.load_state_dict(model_dict)
+                model.load_state_dict(pre_state_dict)
 
         else:
 
@@ -325,10 +288,15 @@ if __name__ == '__main__':
         if args.gpus == 1:
             model.cuda()
         elif args.distributed:
-            distributed.init_process_group(backend="gloo",world_size=5,)
+            distributed.init_process_group(backend="gloo",
+                                           init_method='tcp://127.0.0.1:23456',
+                                           world_size=6,
+                                           rank=0)
+            model.cuda()
+            model = DistributedDataParallel(model)
         else:
-            model = DataParallel(model, device_ids=list(range(args.gpus)))  # output stored in gpus[0]
-            model = model.cuda()
+            model.cuda()
+            model = DataParallel(model, device_ids=list(range(args.gpus))).cuda()  # output stored in gpus[0]
 
         # fix certain layers according to args.fine_tune
         # for resnet50: optional depth is : 2,32,87,124,150,153(fine-tune all)
@@ -337,6 +305,8 @@ if __name__ == '__main__':
         # for resnext1101 : optional depth is :
         # for resnext2101 : optional depth is :
         # for ChampResNet152 : optional depth is : 2, 32(conv5),242(conv4),353(conv3),428(conv2),437(fine-tune all)
+
+        #@todo need to freeze all parameters before the depth
         if args.depth != 1:
             param_name = list([name for name,_ in model.named_parameters()])
             model_params = list()
@@ -372,26 +342,76 @@ if __name__ == '__main__':
               .format(args.resume, checkpoint['epoch']))
 
     # define loss function and optimizer
-    # criterion = nn.CrossEntropyLoss().cuda()
-    criterion = LSR().cuda()
+    criterion = nn.CrossEntropyLoss().cuda()
+    # criterion = LSR().cuda()
 
+    crop_dict = {224: 256, 320: 395, 336: 384, 448: 512}
+    # ---------------------------------------------------
+    #                                        data loading
+    # ---------------------------------------------------
+    train_dataset = AIC_scene(
+        part="train",
+        path=args.path,
+        Transform=transforms.Compose([
+            # AIC_scene_data.RandomScaleCrop(),
+            AIC_scene_data.RandomSizedCrop(args.scrop),
+            # AIC_scene_data.supervised_Crop((args.scrop,args.scrop),os.path.join(args.path,"AIC_train_scrop224")),
+            # AIC_scene_data.ColorJitter(args.brightness,args.contrast,args.saturation,args.hue),
+            AIC_scene_data.RandomHorizontalFlip(),
+            AIC_scene_data.ToTensor(),  # pixel values range from 0.0 to 1.0
+            # AIC_scene_data.pcaJittering(pcaJittering.getEig()),
+            AIC_scene_data.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])  # ImageNet
+        ]))
+    print(train_dataset.__len__())
+    val_dataset = AIC_scene(
+        part="val",
+        path=args.path,
+        Transform=transforms.Compose([
+            AIC_scene_data.Scale(crop_dict[args.scrop]),
+            # AIC_scene_data.ColorJitter(args.brightness,args.contrast,args.saturation,args.hue),
+            # AIC_scene_data.TenCrop(args.scrop),
+            AIC_scene_data.MultiCrop(args.crop),
+            AIC_scene_data.ToTensor(eval=True),
+            AIC_scene_data.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225],
+                                     eval=True)  # ImageNet
+        ]))
+    print(val_dataset.__len__())
+
+    if args.distributed:
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+    else:
+        train_sampler = None
+
+    train_Loader, val_Loader = _make_dataloaders(train_dataset, val_dataset)
+
+    # display only a batch of image without undermining program's speed
+    for i, data in enumerate(train_Loader):
+        batch_img, batch_label = data['image'], data['label']
+        grid = utils.make_grid(batch_img, nrow=16, padding=0, normalize=True)
+        writer.add_image('1stbatch_trainImgs', grid)
+        if i == 0:
+            break
     # ---------------------------------------------------
     #                                               train
     # ---------------------------------------------------
 
     if args.resume is None:
         best_prec3 = 0
-
+    # low = np.load("lowAccuracy.npy")
     for ith_epoch in range(args.start_epoch,args.epochs):
 
-        # _set_lr(optimizer, ith_epoch, args.epochs)
+        # shuffle label every epoch
+        # utility_Func.supervised_label_shuffle(os.path.join(args.path,"ai_challenger_scene_train_20170904","train_label.txt"),
+        #                                       os.path.join(args.path,"ai_challenger_scene_train_20170904","shuffle_label.txt"),
+        #                                       low,train_dataset,args)
 
         if args.optimizer == 'Adam':
             pass
         else:
             _set_lr(optimizer, ith_epoch, args.epochs, args.cosine)
 
-        priorDis = np.load("priorDis.npy")
         train_loss, _train_prec1, _train_prec3 = train(train_Loader,model,criterion,optimizer,ith_epoch)
         writer.add_scalar('train_loss', train_loss, ith_epoch)
         writer.add_scalar('train_prec1', _train_prec1, ith_epoch)
@@ -418,8 +438,8 @@ if __name__ == '__main__':
                 'model': model,
                 'best_prec3': best_prec3,
                 'optimizer': optimizer,
-            },  args.path , args.model, args.lr,args.depth,args.batchSize,
-                args.scrop,args.lr_decay,args.gpus,args.optimizer,is_best)
+                'cls_top3': val_cls3
+            },args,is_best)
         elif is_best:
             print('=====> setting new best precision@3 : {}'.format(best_prec3))
             _save_checkpoint({
@@ -428,8 +448,8 @@ if __name__ == '__main__':
                 'model': model,
                 'best_prec3' : best_prec3,
                 'optimizer': optimizer,
-            },  args.path ,args.model,args.lr,args.depth,args.batchSize,
-                args.scrop,args.lr_decay,args.gpus,args.optimizer,is_best)
+                'cls_top3' : val_cls3
+            },args,is_best)
 
         for name,param in model.named_parameters():
             writer.add_histogram(name,param.clone().cpu().data.numpy(),ith_epoch)

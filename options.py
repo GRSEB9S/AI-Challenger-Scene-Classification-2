@@ -4,13 +4,15 @@ import torch
 def parse_args():
 
     parser = argparse.ArgumentParser(description="scene classification for AI challenge")
-    parser.add_argument('--t',type=float,default=0.01)
-    parser.add_argument('--hue',type=float,default=0.4  )
+    parser.add_argument('--t',type=float,default=0.05)
+    parser.add_argument('--hue',type=float,default=0.4)
     parser.add_argument('--cosine',type=str,default=False)
-    parser.add_argument('--epsilon',type=float,default=0.008)
+    parser.add_argument('--last-conv',default=7,type=int)
+    parser.add_argument('--crop-nums',default=15,type=int)
     parser.add_argument('--contrast',default=0.4,type=float)
+    parser.add_argument('--epsilon',type=float,default=0.008)
     parser.add_argument('--saturation',default=0.4,type=float)
-    parser.add_argument('--distributed',type=str,default=False)
+    parser.add_argument('--distributed',type=bool,default=False)
     parser.add_argument('--brightness',default=0.4,type=float)
     parser.add_argument('--momentum',default=0.9,type=float,help="momentum")
     parser.add_argument('--batchSize',default=256,type=int,help="batch Size")
@@ -31,8 +33,8 @@ def parse_args():
     parser.add_argument('--gpus',default=torch.cuda.device_count(),type=int,help="how many Gpus to be used")
     parser.add_argument('--pretrained',default=True,type=bool,help="whether to use pretrained models or not")
     parser.add_argument('--print-freq', default=50, type=int, help="print training statics every print_freq batches")
-    parser.add_argument('--pre_model_path',default="/data/chaoyang/Places_challenge2017/",type=str,help="path to pre-trained models")
-    parser.add_argument('--best-model',type=str,default="ResNet50_best_lr0.01_depth1_bs160_scale224_lrdecay5_gpus2_optimizerSGD.pth.tar",help="best model name")
+    parser.add_argument('--pre-model-path',default="/data/chaoyang/Places_challenge2017/",type=str,help="path to pre-trained models")
+    parser.add_argument('--best-model',type=str,default="ResNet50_best_lr0.01_depth1_bs288_scale224_lrdecay5_gpus4_optimizerSGD.pth.tar",help="best model name")
     args = parser.parse_args()
 
     return args

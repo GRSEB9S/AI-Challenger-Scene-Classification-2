@@ -11,10 +11,9 @@ import numpy as np
 from PIL import Image
 from PIL import ImageEnhance
 from torch.utils.data import Dataset
-from torchvision.transforms import  Compose
+from torchvision.transforms import Compose
 
 def pil_loader(path):
-    # open path as file to avoid ResourceWarning (https://github.com/python-pillow/Pillow/issues/835)
     with open(path, 'rb') as f:
         with Image.open(f) as img:
             return img.convert('RGB')
@@ -26,7 +25,6 @@ class RandomHorizontalFlip(object):
         """
         Args:
             sample['image'] (PIL.Image): Image to be flipped.
-
         Returns:
             PIL.Image: Randomly flipped image.
         """
@@ -184,12 +182,12 @@ class RandomSizedCrop(object):
                 sample['image'] = sample['image'].crop((x1, y1, x1 + w, y1 + h))
                 assert(sample['image'].size == (w, h))
 
-                return {'image':sample['image'].resize((self.size, self.size), self.interpolation),'label':sample['label'],'idx':sample['idx']}
+                return {'image':sample['image'].resize((self.size,self.size),self.interpolation),'label':sample['label'],'idx':sample['idx']}
 
         # Fallback
         scale = Scale(self.size, interpolation=self.interpolation)
         crop = CenterCrop(self.size)
-        return {'image' : crop(scale(sample['image'])),'label' : sample['label'], 'idx':sample['idx']}
+        return {'image':crop(scale(sample['image'])),'label':sample['label'],'idx':sample['idx']}
 
 class supervised_Crop(object):
 
@@ -296,7 +294,6 @@ class TenCrop(object):
     """
 
     def __init__(self, size, vflip=False):
-        self.size = size
         if isinstance(size, numbers.Number):
             self.size = (int(size), int(size))
         else:
@@ -439,28 +436,12 @@ class pcaJittering(object):
     def __init__(self,eig):
         self.eigValue = eig[0]
         self.eigVector = eig[1]
-        self.random = self.genRandom()
-
-    def genRandom(self):
-        return np.array([random.gauss(0,0.1) for i in range(3)])
 
     def __call__(self,sample):
-        addQuantity = np.dot(self.eigVector,self.random * self.eigValue)
-        addImg = np.array(sample['image']) + addQuantity.reshape((1,1,3))
-        return {'image':Image.fromarray(addImg,mode='RGB'),'label':sample['label'],'idx':sample['idx']}
-
-class Lambda(object):
-    """Apply a user-defined lambda as a transform.
-    Args:
-        lambd (function): Lambda/function to be used for transform.
-    """
-
-    def __init__(self, lambd):
-        assert isinstance(lambd, types.LambdaType)
-        self.lambd = lambd
-
-    def __call__(self, img):
-        return self.lambd(img)
+        alpha = np.array([random.gauss(0, 0.1) for i in range(3)],dtype="float32")
+        addQuantity = np.dot(self.eigVector,alpha * self.eigValue)
+        addImg = sample['image'].numpy() + addQuantity.reshape((3,1,1))
+        return {'image':torch.from_numpy(addImg),'label':sample['label'],'idx':sample['idx']}
 
 def adjust_brightness(sample, brightness_factor):
     """Adjust brightness of an Image.
@@ -634,15 +615,8 @@ class AIC_scene(Dataset):
                     f_label.write("{} {}\n".format(dict['image_id'],dict['label_id']))
         else:
             raise ValueError('specify the root path!')
-
-        if part=="train":
-            if os.path.exists(os.path.join(path, sub_path[part], "shuffle_label.txt")):
-                self.read = os.path.join(path, sub_path[part], "shuffle_label.txt")
-            else:
-                raise ValueError("please do supervised data shuffle first")
-        else:
-            self.read = os.path.join(path,sub_path[part],"%s_label.txt" % part)
-        self.image, self.label = list(), list()
+        self.read = os.path.join(path, sub_path[part], "%s_label.txt" % part)
+        self.image,self.label = list(),list()
 
         # read txt file, store full image/label path in self instance
         with open(self.read) as f:
@@ -660,10 +634,10 @@ class AIC_scene(Dataset):
             length = len(f.readlines())
         return length
 
-    def __getitem__(self, item):
+    def __getitem__(self,item):
 
         image = pil_loader(self.image[item])
-        sample = {"image": image, "label": self.label[item], "idx" : item}
+        sample = {"image":image,"label":self.label[item],"idx":item}
 
         if self.Transform:
             tsfm_sample = self.Transform(sample)
@@ -720,7 +694,7 @@ class AIC_scene_test(Dataset):
 
         return length
 
-    def __getitem__(self, item):
+    def __getitem__(self,item):
 
         image = pil_loader(self.image[item].rstrip())
         sample = {"image": image, "label" : self.image_name[item],"idx": item}
@@ -730,29 +704,6 @@ class AIC_scene_test(Dataset):
             return tsfm_sample
 
         return sample
-
-class places365std_AIC(Dataset):
-
-    # add images with common classes to AIC_scene_train dataset
-    def __init__(self):
-        pass
-
-    def __len__(self):
-        pass
-
-    def __getitem__(self, item):
-        pass
-
-class LSUN(Dataset):
-
-    def __init__(self):
-        pass
-
-    def __len__(self):
-        pass
-
-    def __getitem__(self, item):
-        pass
 
 
 
