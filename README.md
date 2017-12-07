@@ -1,6 +1,6 @@
 # Scene Classification for AI Challenger
 
-This repository is hosted for [**Scene Classification of AI Challenger competition**](https://challenger.ai/competition/scene) since it comes to an end. The final accuracy we achieved on testA dataset is appromaximately 96.5%, with a large margin behind the champion, which is around 98.8%. We have been not paying attention and energy into this competition for over a month due to other business, since it's over, we make it publicly available. We implemented multiple tricks using pytorch, which is crutial to competition, if you're interested in competitions related to scene classification, this may help. Detailed description of usages are listed as follows.
+This repository is hosted for [**Scene Classification of AI Challenger competition**](https://challenger.ai/competition/scene) since it comes to an end. We are only active for the first half of time throughout this competition. The final accuracy we achieved on testA dataset is appromaximately 96.5% on testA, top 30% on testB, with a large margin behind the champion. We have been not paying attention and energy into this competition for over a month due to other business, since it's over, we make it publicly available. We didn't do network engineering, only the plain ResNet, but we do implemented multiple small tricks using pytorch, which is crutial to competition, if you're interested in competitions related to scene classification, this may help. Detailed description of usages are listed as follows.
 
 ## Training a convolutional neural network
 
